@@ -1,0 +1,20 @@
+# Icon Placeholder
+# Create a 48x48 pixel icon file named "icon.ico" in the project directory.
+# This icon will be used for:
+# - Application icon
+# - System tray icon
+# - Installer icon
+# - File associations (if any)
+
+# You can use online tools like:
+# - https://convertio.co/png-ico/
+# - https://favicon.io/favicon-converter/
+# - Or use GIMP, Paint.NET, or similar tools
+
+# Recommended sizes to include in the ICO file:
+# - 16x16
+# - 32x32
+# - 48x48
+# - 256x256
+
+# For now, the application will use SystemIcons.Application as fallback
