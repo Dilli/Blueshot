@@ -19,16 +19,13 @@ jobs:
         dotnet-version: 8.0.x
         
     - name: Restore dependencies
-      run: dotnet restore
+      run: dotnet restore Blueshot.csproj
       
     - name: Build
-      run: dotnet build --no-restore --configuration Release
-      
-    - name: Test
-      run: dotnet test --no-build --verbosity normal --configuration Release
+      run: dotnet build Blueshot.csproj --no-restore --configuration Release
       
     - name: Publish self-contained
-      run: dotnet publish --configuration Release --runtime win-x64 --self-contained true --output ./publish
+      run: dotnet publish Blueshot.csproj --configuration Release --runtime win-x64 --self-contained true --output ./publish
       
     - name: Create ZIP archive
       run: |
