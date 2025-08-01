@@ -6,6 +6,10 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+  actions: read
+
 jobs:
   build:
     runs-on: windows-latest
@@ -42,37 +46,24 @@ jobs:
         
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/')
-      uses: actions/create-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ github.ref }}
-        release_name: Blueshot ${{ github.ref }}
-        draft: false
-        prerelease: false
-        body: |
-          ## What's New
-          
-          See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
-          
-          ## Installation Options
-          
-          1. **Portable ZIP**: Download and extract anywhere
-          2. **Quick Install**: Extract and run `Install.bat`
-          3. **Professional Installer**: Coming soon
-          
-          ## System Requirements
-          
-          - Windows 10/11 (x64)
-          - No additional dependencies required (self-contained)
-          
-    - name: Upload Release Asset
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./Blueshot-Standalone-${{ github.ref_name }}.zip
-        asset_name: Blueshot-Standalone-${{ github.ref_name }}.zip
-        asset_content_type: application/zip
+      run: |
+        $releaseNotes = @"
+        ## What's New
+
+        See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
+
+        ## Installation Options
+
+        1. **Portable ZIP**: Download and extract anywhere
+        2. **Quick Install**: Extract and run ``Install.bat``
+        3. **Professional Installer**: Coming soon
+
+        ## System Requirements
+
+        - Windows 10/11 (x64)
+        - No additional dependencies required (self-contained)
+        "@
+        gh release create ${{ github.ref_name }} --title "Blueshot ${{ github.ref_name }}" --notes $releaseNotes ./Blueshot-Standalone-${{ github.ref_name }}.zip
+      shell: powershell
