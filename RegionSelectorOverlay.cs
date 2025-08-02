@@ -11,6 +11,8 @@ namespace Blueshot
         private Point endPoint;
         private Rectangle selectionRectangle;
         private Bitmap backgroundImage;
+        private Timer animationTimer;
+        private float dashOffset = 0;
 
         public event EventHandler<RegionSelectedEventArgs> RegionSelected;
 
@@ -40,6 +42,19 @@ namespace Blueshot
             this.SetStyle(ControlStyles.AllPaintingInWmPaint | 
                          ControlStyles.UserPaint | 
                          ControlStyles.DoubleBuffer, true);
+
+            // Initialize animation timer for marching ants effect
+            animationTimer = new Timer();
+            animationTimer.Interval = 100; // Update every 100ms for smooth animation
+            animationTimer.Tick += (s, e) => 
+            {
+                dashOffset += 1.0f;
+                if (dashOffset > 10) dashOffset = 0; // Reset to prevent overflow
+                if (!selectionRectangle.IsEmpty)
+                {
+                    this.Invalidate(); // Repaint to show animation
+                }
+            };
 
             // Event handlers
             this.MouseDown += OnMouseDown;
@@ -77,6 +92,9 @@ namespace Blueshot
                 startPoint = e.Location;
                 endPoint = e.Location;
                 selectionRectangle = new Rectangle();
+                
+                // Start animation when selection begins
+                animationTimer.Start();
             }
         }
 
@@ -145,10 +163,32 @@ namespace Blueshot
                     graphics.FillRegion(overlayBrush, fullRegion);
                 }
 
-                // Draw selection border with a more visible color
-                using (var borderPen = new Pen(Color.FromArgb(0, 120, 215), 2)) // Blue border
+                // Draw selection border with thin dotted style and marching ants effect
+                using (var borderPen = new Pen(Color.FromArgb(255, 255, 255), 1)) // White outer border
                 {
+                    borderPen.DashStyle = System.Drawing.Drawing2D.DashStyle.Custom;
+                    borderPen.DashPattern = new float[] { 4, 4 }; // 4 pixels on, 4 pixels off
+                    borderPen.DashOffset = dashOffset; // Animated offset for marching ants
                     graphics.DrawRectangle(borderPen, selectionRectangle);
+                }
+
+                // Draw an inner border for contrast
+                if (selectionRectangle.Width > 2 && selectionRectangle.Height > 2)
+                {
+                    var innerRect = new Rectangle(
+                        selectionRectangle.X + 1,
+                        selectionRectangle.Y + 1,
+                        selectionRectangle.Width - 2,
+                        selectionRectangle.Height - 2
+                    );
+                    
+                    using (var innerBorderPen = new Pen(Color.FromArgb(0, 0, 0), 1)) // Black inner border
+                    {
+                        innerBorderPen.DashStyle = System.Drawing.Drawing2D.DashStyle.Custom;
+                        innerBorderPen.DashPattern = new float[] { 4, 4 }; // 4 pixels on, 4 pixels off
+                        innerBorderPen.DashOffset = dashOffset + 4; // Offset by 4 to create alternating pattern
+                        graphics.DrawRectangle(innerBorderPen, innerRect);
+                    }
                 }
 
                 // Draw corner handles for better visibility
@@ -173,7 +213,7 @@ namespace Blueshot
         {
             if (selectionRectangle.IsEmpty) return;
 
-            var handleSize = 8;
+            var handleSize = 6; // Smaller handles to match thin border style
             var handleBrush = new SolidBrush(Color.FromArgb(0, 120, 215));
             var handlePen = new Pen(Color.White, 1);
 
@@ -257,6 +297,9 @@ namespace Blueshot
 
         private void CompleteSelection()
         {
+            // Stop animation
+            animationTimer?.Stop();
+            
             var selectedRegion = selectionRectangle;
             
             // Ensure minimum size
@@ -278,6 +321,9 @@ namespace Blueshot
 
         private void CancelSelection()
         {
+            // Stop animation
+            animationTimer?.Stop();
+            
             // Hide the overlay immediately
             this.Hide();
             Application.DoEvents();
@@ -290,6 +336,8 @@ namespace Blueshot
         {
             if (disposing)
             {
+                animationTimer?.Stop();
+                animationTimer?.Dispose();
                 backgroundImage?.Dispose();
             }
             base.Dispose(disposing);

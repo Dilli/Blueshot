@@ -20,6 +20,7 @@ namespace Blueshot
         private ToolStripStatusLabel sizeLabel;
         private ToolStripStatusLabel zoomLabel;
         private Panel imagePanel;
+        private Panel mainContainer; // Container with scroll bars
         private Bitmap screenshot;
         private Bitmap workingImage;
         private float zoomFactor = 1.0f;
@@ -28,8 +29,8 @@ namespace Blueshot
         private List<ScreenshotItem> screenshots = new List<ScreenshotItem>();
         private int currentScreenshotIndex = 0;
         private Panel thumbnailPanel;
-        private Button previousButton;
-        private Button nextButton;
+        private RoundedButton previousButton;
+        private RoundedButton nextButton;
         private Label screenshotCountLabel;
 
         // Annotation tools
@@ -71,6 +72,16 @@ namespace Blueshot
 
             public ScreenshotItem(Bitmap originalImage)
             {
+                if (originalImage == null)
+                {
+                    throw new ArgumentNullException(nameof(originalImage), "Original image cannot be null");
+                }
+                
+                if (originalImage.Width <= 0 || originalImage.Height <= 0)
+                {
+                    throw new ArgumentException("Original image must have valid dimensions", nameof(originalImage));
+                }
+                
                 OriginalImage = new Bitmap(originalImage);
                 WorkingImage = new Bitmap(originalImage);
                 CaptureTime = DateTime.Now;
@@ -157,16 +168,30 @@ namespace Blueshot
             public string Text { get; set; } = "";
             public Font Font { get; set; } = new Font("Segoe UI", 12, FontStyle.Regular);
             public int CounterNumber { get; set; } = 0;
+            public bool IsTextRegion { get; set; } = false; // Flag for region-based text
 
             public Rectangle GetBounds()
             {
                 if (Tool == AnnotationTool.Text)
                 {
-                    // For text, calculate bounds based on text size
-                    using (var g = Graphics.FromImage(new Bitmap(1, 1)))
+                    if (IsTextRegion)
                     {
-                        var textSize = g.MeasureString(Text ?? "Sample", Font);
-                        return new Rectangle(StartPoint.X, StartPoint.Y, (int)textSize.Width, (int)textSize.Height);
+                        // For region-based text, use the actual region bounds
+                        return new Rectangle(
+                            Math.Min(StartPoint.X, EndPoint.X),
+                            Math.Min(StartPoint.Y, EndPoint.Y),
+                            Math.Abs(EndPoint.X - StartPoint.X),
+                            Math.Abs(EndPoint.Y - StartPoint.Y)
+                        );
+                    }
+                    else
+                    {
+                        // For point-based text, calculate bounds based on text size
+                        using (var g = Graphics.FromImage(new Bitmap(1, 1)))
+                        {
+                            var textSize = g.MeasureString(Text ?? "Sample", Font);
+                            return new Rectangle(StartPoint.X, StartPoint.Y, (int)textSize.Width, (int)textSize.Height);
+                        }
                     }
                 }
                 else if (Tool == AnnotationTool.Counter)
@@ -266,9 +291,23 @@ namespace Blueshot
 
         public PreviewForm(Bitmap capturedImage)
         {
-            InitializeComponent();
-            AddScreenshot(capturedImage);
-            SetupPreview();
+            try
+            {
+                InitializeComponent();
+                
+                if (capturedImage != null)
+                {
+                    AddScreenshot(capturedImage);
+                }
+                
+                SetupPreview();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error in PreviewForm constructor: {ex.Message}");
+                MessageBox.Show($"Error creating preview window: {ex.Message}", "Error", 
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         // Add a new constructor for existing instances
@@ -280,28 +319,53 @@ namespace Blueshot
 
         public void AddScreenshot(Bitmap capturedImage)
         {
-            var screenshotItem = new ScreenshotItem(capturedImage);
-            screenshots.Add(screenshotItem);
-            currentScreenshotIndex = screenshots.Count - 1;
-            
-            // Update UI to show the new screenshot
-            if (screenshots.Count == 1)
+            try
             {
-                screenshot = screenshotItem.OriginalImage;
-                workingImage = new Bitmap(screenshotItem.WorkingImage);
-                annotations = screenshotItem.Annotations;
+                if (capturedImage == null)
+                {
+                    Logger.LogError("AddScreenshot called with null image");
+                    MessageBox.Show("Cannot add screenshot: Image is null", "Error", 
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+                
+                if (capturedImage.Width <= 0 || capturedImage.Height <= 0)
+                {
+                    Logger.LogError($"AddScreenshot called with invalid dimensions: {capturedImage.Width}x{capturedImage.Height}");
+                    MessageBox.Show($"Cannot add screenshot: Invalid image dimensions ({capturedImage.Width}x{capturedImage.Height})", "Error", 
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                var screenshotItem = new ScreenshotItem(capturedImage);
+                screenshots.Add(screenshotItem);
+                currentScreenshotIndex = screenshots.Count - 1;
+                
+                // Update UI to show the new screenshot
+                if (screenshots.Count == 1)
+                {
+                    screenshot = screenshotItem.OriginalImage;
+                    workingImage = new Bitmap(screenshotItem.WorkingImage);
+                    annotations = screenshotItem.Annotations;
+                }
+                else
+                {
+                    LoadScreenshot(currentScreenshotIndex);
+                }
+                
+                // Only update UI components if they are initialized
+                if (thumbnailPanel != null)
+                {
+                    UpdateThumbnailPanel();
+                    UpdateNavigationButtons();
+                    UpdateScreenshotCounter();
+                }
             }
-            else
+            catch (Exception ex)
             {
-                LoadScreenshot(currentScreenshotIndex);
-            }
-            
-            // Only update UI components if they are initialized
-            if (thumbnailPanel != null)
-            {
-                UpdateThumbnailPanel();
-                UpdateNavigationButtons();
-                UpdateScreenshotCounter();
+                Logger.LogError($"Error in AddScreenshot: {ex.Message}");
+                MessageBox.Show($"Error adding screenshot: {ex.Message}", "Error", 
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -335,13 +399,14 @@ namespace Blueshot
             this.Text = "Screenshot Preview - Blueshot";
             this.Size = new Size(1000, 700);
             this.StartPosition = FormStartPosition.CenterScreen;
-            this.WindowState = FormWindowState.Normal;
+            this.WindowState = FormWindowState.Maximized; // Start maximized
+            this.FormBorderStyle = FormBorderStyle.None; // Hide title bar
             this.KeyPreview = true;
             this.BackColor = Color.FromArgb(240, 240, 240);
             this.Icon = SystemIcons.Application;
             this.MinimumSize = new Size(600, 400);
 
-            // Create menu strip
+            // Create menu strip (but don't add it to controls - hidden)
             CreateMenuStrip();
 
             // Create toolbar
@@ -356,18 +421,17 @@ namespace Blueshot
             // Create status strip
             CreateStatusStrip();
 
-            // Set up layout
-            this.MainMenuStrip = menuStrip;
+            // Set up layout (without menu strip)
             this.Controls.Add(imagePanel);
             this.Controls.Add(annotationToolStrip);
             this.Controls.Add(toolStrip);
-            this.Controls.Add(menuStrip);
             this.Controls.Add(statusStrip);
 
             // Event handlers
             this.KeyDown += OnKeyDown;
             this.FormClosing += OnFormClosing;
             this.Resize += OnFormResize;
+            this.SizeChanged += OnSizeChanged;
         }
 
         private void CreateMenuStrip()
@@ -522,6 +586,21 @@ namespace Blueshot
             // Another separator
             var separator4 = new ToolStripSeparator();
 
+            // Window control buttons
+            var minimizeButton = new ToolStripButton("", CreateMinimizeIcon(), (s, e) => this.WindowState = FormWindowState.Minimized)
+            {
+                ToolTipText = "Minimize Window",
+                DisplayStyle = ToolStripItemDisplayStyle.Image,
+                Alignment = ToolStripItemAlignment.Right
+            };
+
+            var maximizeButton = new ToolStripButton("", CreateMaximizeIcon(), (s, e) => ToggleMaximize())
+            {
+                ToolTipText = "Maximize/Restore Window",
+                DisplayStyle = ToolStripItemDisplayStyle.Image,
+                Alignment = ToolStripItemAlignment.Right
+            };
+
             // Close button
             var closeButton = new ToolStripButton("", CreateCloseIcon(), (s, e) => this.Close())
             {
@@ -535,7 +614,7 @@ namespace Blueshot
                 zoomInButton, zoomOutButton, actualSizeButton, fitToWindowButton, separator2,
                 annotationColorLabel, annotationColorButton, annotationThicknessLabel, annotationThicknessCombo, separator3,
                 counterLabel, counterButton, counterResetButton, separator4,
-                closeButton
+                minimizeButton, maximizeButton, closeButton
             });
         }
 
@@ -664,10 +743,11 @@ namespace Blueshot
             };
 
             // Create main container for image and thumbnails
-            var mainContainer = new Panel
+            mainContainer = new Panel
             {
                 Dock = DockStyle.Fill,
-                BackColor = Color.Transparent
+                BackColor = Color.Transparent,
+                AutoScroll = true // Enable scrolling for large images
             };
 
             // Create thumbnail panel at the bottom
@@ -693,11 +773,11 @@ namespace Blueshot
         {
             thumbnailPanel = new Panel
             {
-                Height = 140,
+                Height = 200, // Increased from 140 to 200
                 Dock = DockStyle.Bottom,
                 BackColor = Color.FromArgb(250, 250, 250),
                 BorderStyle = BorderStyle.FixedSingle,
-                AutoScroll = true,
+                AutoScroll = false, // Removed vertical scrolling
                 Padding = new Padding(5)
             };
         }
@@ -706,36 +786,38 @@ namespace Blueshot
         {
             var navPanel = new Panel
             {
-                Height = 40,
+                Height = 60, // Increased from 40 to 60
                 Dock = DockStyle.Bottom,
                 BackColor = Color.FromArgb(245, 245, 245),
                 BorderStyle = BorderStyle.None
             };
 
-            previousButton = new Button
+            previousButton = new RoundedButton
             {
                 Text = "◀ Previous",
-                Width = 80,
-                Height = 30,
-                Location = new Point(10, 5),
+                Width = 120, // Increased from 80 to 120
+                Height = 45,  // Increased from 30 to 45
+                Location = new Point(15, 8), // Adjusted position
                 BackColor = Color.FromArgb(0, 120, 215),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 9)
+                Font = new Font("Segoe UI", 11, FontStyle.Bold), // Increased font size
+                CornerRadius = 5
             };
             previousButton.FlatAppearance.BorderSize = 0;
             previousButton.Click += (s, e) => NavigateToScreenshot(currentScreenshotIndex - 1);
 
-            nextButton = new Button
+            nextButton = new RoundedButton
             {
                 Text = "Next ▶",
-                Width = 80,
-                Height = 30,
-                Location = new Point(100, 5),
+                Width = 120, // Increased from 80 to 120
+                Height = 45,  // Increased from 30 to 45
+                Location = new Point(145, 8), // Adjusted position
                 BackColor = Color.FromArgb(0, 120, 215),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 9)
+                Font = new Font("Segoe UI", 11, FontStyle.Bold), // Increased font size
+                CornerRadius = 5
             };
             nextButton.FlatAppearance.BorderSize = 0;
             nextButton.Click += (s, e) => NavigateToScreenshot(currentScreenshotIndex + 1);
@@ -743,10 +825,10 @@ namespace Blueshot
             screenshotCountLabel = new Label
             {
                 Text = "Screenshot 1 of 1",
-                Location = new Point(200, 10),
-                Size = new Size(150, 20),
+                Location = new Point(285, 18), // Adjusted position
+                Size = new Size(200, 25), // Increased size
                 ForeColor = Color.FromArgb(64, 64, 64),
-                Font = new Font("Segoe UI", 9),
+                Font = new Font("Segoe UI", 11, FontStyle.Regular), // Increased font size
                 TextAlign = ContentAlignment.MiddleLeft
             };
 
@@ -1045,6 +1127,65 @@ namespace Blueshot
                 {
                     g.DrawLine(pen, 8, 8, 16, 16);
                     g.DrawLine(pen, 16, 8, 8, 16);
+                }
+            }
+            return icon;
+        }
+
+        private Bitmap CreateMinimizeIcon()
+        {
+            var icon = new Bitmap(24, 24);
+            using (var g = Graphics.FromImage(icon))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                
+                // Circle background
+                using (var brush = new SolidBrush(Color.FromArgb(255, 193, 7)))
+                {
+                    g.FillEllipse(brush, 2, 2, 20, 20);
+                }
+                
+                // Minimize line
+                using (var pen = new Pen(Color.White, 2))
+                {
+                    g.DrawLine(pen, 7, 12, 17, 12);
+                }
+            }
+            return icon;
+        }
+
+        private Bitmap CreateMaximizeIcon()
+        {
+            var icon = new Bitmap(24, 24);
+            using (var g = Graphics.FromImage(icon))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                
+                // Circle background
+                using (var brush = new SolidBrush(Color.FromArgb(76, 175, 80)))
+                {
+                    g.FillEllipse(brush, 2, 2, 20, 20);
+                }
+                
+                // Check if window is maximized to show appropriate icon
+                if (this.WindowState == FormWindowState.Maximized)
+                {
+                    // Restore icon - two overlapping squares
+                    using (var pen = new Pen(Color.White, 1.5f))
+                    {
+                        // Back square
+                        g.DrawRectangle(pen, 9, 7, 6, 6);
+                        // Front square
+                        g.DrawRectangle(pen, 7, 9, 6, 6);
+                    }
+                }
+                else
+                {
+                    // Maximize icon - single square
+                    using (var pen = new Pen(Color.White, 2))
+                    {
+                        g.DrawRectangle(pen, 8, 8, 8, 8);
+                    }
                 }
             }
             return icon;
@@ -1582,7 +1723,7 @@ namespace Blueshot
                 
                 pictureBox.Image = workingImage;
                 UpdateImageDisplay();
-                FitToWindow();
+                ActualSize(); // Set 1:1 zoom instead of FitToWindow()
                 UpdateStatusLabels();
                 SetupImageEventHandlers();
                 
@@ -1599,7 +1740,11 @@ namespace Blueshot
             pictureBox.MouseMove += PictureBox_MouseMove;
             pictureBox.MouseUp += PictureBox_MouseUp;
             pictureBox.MouseDoubleClick += PictureBox_MouseDoubleClick;
+            pictureBox.MouseWheel += PictureBox_MouseWheel;
             pictureBox.Paint += PictureBox_Paint;
+            
+            // Enable mouse wheel events for the picture box
+            mainContainer.MouseWheel += MainContainer_MouseWheel;
         }
 
         // Annotation tool methods
@@ -1796,7 +1941,50 @@ namespace Blueshot
                 case AnnotationTool.Text:
                     using (var brush = new SolidBrush(color))
                     {
-                        g.DrawString(annotation.Text ?? "Text", annotation.Font, brush, annotation.StartPoint);
+                        if (annotation.IsTextRegion)
+                        {
+                            // For region-based text, draw text within the bounds
+                            var textRect = new Rectangle(
+                                Math.Min(annotation.StartPoint.X, annotation.EndPoint.X),
+                                Math.Min(annotation.StartPoint.Y, annotation.EndPoint.Y),
+                                Math.Abs(annotation.EndPoint.X - annotation.StartPoint.X),
+                                Math.Abs(annotation.EndPoint.Y - annotation.StartPoint.Y)
+                            );
+                            
+                            // Draw background rectangle with slight transparency
+                            using (var bgBrush = new SolidBrush(Color.FromArgb(240, Color.White)))
+                            {
+                                g.FillRectangle(bgBrush, textRect);
+                            }
+                            
+                            // Draw border
+                            using (var pen = new Pen(color, 1))
+                            {
+                                pen.DashStyle = System.Drawing.Drawing2D.DashStyle.Dot;
+                                g.DrawRectangle(pen, textRect);
+                            }
+                            
+                            // Draw text within the rectangle with word wrapping
+                            if (!string.IsNullOrEmpty(annotation.Text))
+                            {
+                                var stringFormat = new StringFormat
+                                {
+                                    Alignment = StringAlignment.Near,
+                                    LineAlignment = StringAlignment.Near,
+                                    FormatFlags = StringFormatFlags.LineLimit
+                                };
+                                
+                                // Add some padding
+                                textRect.Inflate(-5, -5);
+                                
+                                g.DrawString(annotation.Text, annotation.Font, brush, textRect, stringFormat);
+                            }
+                        }
+                        else
+                        {
+                            // For point-based text, draw at the start point
+                            g.DrawString(annotation.Text ?? "Text", annotation.Font, brush, annotation.StartPoint);
+                        }
                     }
                     break;
 
@@ -1893,9 +2081,10 @@ namespace Blueshot
         {
             if (e.Button == MouseButtons.Left)
             {
+                // Convert mouse coordinates to image coordinates
                 var imagePoint = new Point(
-                    (int)((e.X + imagePanel.HorizontalScroll.Value) / zoomFactor),
-                    (int)((e.Y + imagePanel.VerticalScroll.Value) / zoomFactor)
+                    (int)(e.X / zoomFactor),
+                    (int)(e.Y / zoomFactor)
                 );
 
                 if (currentTool == AnnotationTool.Select)
@@ -1915,9 +2104,10 @@ namespace Blueshot
 
         private void PictureBox_MouseMove(object sender, MouseEventArgs e)
         {
+            // Convert mouse coordinates to image coordinates
             var imagePoint = new Point(
-                (int)((e.X + imagePanel.HorizontalScroll.Value) / zoomFactor),
-                (int)((e.Y + imagePanel.VerticalScroll.Value) / zoomFactor)
+                (int)(e.X / zoomFactor),
+                (int)(e.Y / zoomFactor)
             );
 
             if (currentTool == AnnotationTool.Select)
@@ -1938,9 +2128,10 @@ namespace Blueshot
         {
             if (e.Button == MouseButtons.Left)
             {
+                // Convert mouse coordinates to image coordinates
                 var imagePoint = new Point(
-                    (int)((e.X + imagePanel.HorizontalScroll.Value) / zoomFactor),
-                    (int)((e.Y + imagePanel.VerticalScroll.Value) / zoomFactor)
+                    (int)(e.X / zoomFactor),
+                    (int)(e.Y / zoomFactor)
                 );
 
                 if (currentTool == AnnotationTool.Select)
@@ -1955,6 +2146,42 @@ namespace Blueshot
                 {
                     HandleAnnotationMouseUp(imagePoint);
                 }
+            }
+        }
+
+        private void PictureBox_MouseWheel(object sender, MouseEventArgs e)
+        {
+            // Handle mouse wheel for zooming when Ctrl is held
+            if (Control.ModifierKeys == Keys.Control)
+            {
+                const float zoomStep = 0.1f;
+                float newZoomFactor = zoomFactor;
+
+                if (e.Delta > 0)
+                {
+                    newZoomFactor = Math.Min(zoomFactor + zoomStep, 5.0f);
+                }
+                else
+                {
+                    newZoomFactor = Math.Max(zoomFactor - zoomStep, 0.1f);
+                }
+
+                if (newZoomFactor != zoomFactor)
+                {
+                    zoomFactor = newZoomFactor;
+                    Logger.LogDebug($"Mouse wheel zoom changed to {zoomFactor:F1}x", "PictureBox_MouseWheel");
+                    UpdateImageDisplay();
+                }
+            }
+        }
+
+        private void MainContainer_MouseWheel(object sender, MouseEventArgs e)
+        {
+            // Handle scrolling when Ctrl is not held (default scroll behavior)
+            if (Control.ModifierKeys != Keys.Control)
+            {
+                // This will handle normal scrolling in the container
+                return;
             }
         }
 
@@ -2066,6 +2293,9 @@ namespace Blueshot
                 
                 cropRectangle = new Rectangle(x, y, width, height);
                 
+                // Stop the cropping drag operation
+                isCropping = false;
+                
                 // Only proceed if we have a meaningful crop area
                 if (width > 10 && height > 10)
                 {
@@ -2078,6 +2308,215 @@ namespace Blueshot
                 }
                 
                 pictureBox.Invalidate();
+            }
+        }
+
+        private void ApplyCrop()
+        {
+            const string operation = "applying crop";
+            Logger.LogInfo($"Starting crop operation. Crop rectangle: {cropRectangle}", "ApplyCrop");
+            
+            try
+            {
+                if (cropRectangle.IsEmpty || screenshot == null)
+                {
+                    var message = "No valid crop area selected.";
+                    Logger.LogWarning(message, "ApplyCrop");
+                    MessageBox.Show(message, "Crop Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                // Debug output
+                statusLabel.Text = $"Applying crop: {cropRectangle.Width}x{cropRectangle.Height} at ({cropRectangle.X},{cropRectangle.Y})";
+                Logger.LogInfo($"Crop area details - Size: {cropRectangle.Width}x{cropRectangle.Height}, Position: ({cropRectangle.X},{cropRectangle.Y})", "ApplyCrop");
+                
+                // Ensure crop rectangle is within image bounds
+                var imageRect = new Rectangle(0, 0, screenshot.Width, screenshot.Height);
+                var cropRect = Rectangle.Intersect(cropRectangle, imageRect);
+                
+                if (cropRect.Width < 10 || cropRect.Height < 10)
+                {
+                    var message = $"Crop area is too small. Size: {cropRect.Width}x{cropRect.Height}";
+                    Logger.LogWarning(message, "ApplyCrop");
+                    MessageBox.Show(message, "Crop Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                Logger.LogInfo($"Validated crop rectangle: {cropRect}", "ApplyCrop");
+
+                // Create cropped image
+                Bitmap croppedImage = null;
+                var success = ExceptionHandler.SafeExecute(() =>
+                {
+                    Logger.LogDebug("Creating cropped bitmap", "ApplyCrop");
+                    croppedImage = new Bitmap(cropRect.Width, cropRect.Height);
+                    using (var g = Graphics.FromImage(croppedImage))
+                    {
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                        g.DrawImage(screenshot, 
+                            new Rectangle(0, 0, cropRect.Width, cropRect.Height),
+                            cropRect, 
+                            GraphicsUnit.Pixel);
+                    }
+                    Logger.LogInfo("Successfully created cropped image", "ApplyCrop");
+                }, "creating cropped image", "Failed to create the cropped image. Please try again with a different crop area.");
+
+                if (!success || croppedImage == null)
+                {
+                    Logger.LogError("Failed to create cropped image", "ApplyCrop");
+                    return;
+                }
+
+                // Apply any annotations that fall within the crop area
+                var croppedAnnotations = new List<AnnotationObject>();
+                ExceptionHandler.SafeExecute(() =>
+                {
+                    if (annotations != null && annotations.Count > 0)
+                    {
+                        foreach (var annotation in annotations)
+                        {
+                            ExceptionHandler.SafeExecute(() =>
+                            {
+                                var annotationBounds = annotation.GetBounds();
+                                if (cropRect.IntersectsWith(annotationBounds))
+                                {
+                                    // Create a copy of the annotation with adjusted coordinates
+                                    var croppedAnnotation = new AnnotationObject
+                                    {
+                                        Tool = annotation.Tool,
+                                        Color = annotation.Color,
+                                        Thickness = annotation.Thickness,
+                                        Text = annotation.Text,
+                                        Font = annotation.Font != null ? 
+                                            new Font(annotation.Font.FontFamily, annotation.Font.Size, annotation.Font.Style) : 
+                                            new Font("Segoe UI", 12),
+                                        CounterNumber = annotation.CounterNumber,
+                                        StartPoint = new Point(
+                                            Math.Max(0, annotation.StartPoint.X - cropRect.X),
+                                            Math.Max(0, annotation.StartPoint.Y - cropRect.Y)
+                                        ),
+                                        EndPoint = new Point(
+                                            Math.Max(0, annotation.EndPoint.X - cropRect.X),
+                                            Math.Max(0, annotation.EndPoint.Y - cropRect.Y)
+                                        )
+                                    };
+                                    croppedAnnotations.Add(croppedAnnotation);
+                                }
+                            }, "processing individual annotation for crop"); // Silent failure for individual annotations
+                        }
+                    }
+                }, "processing annotations for crop", "Some annotations could not be included in the crop.");
+
+                // Apply annotations to the cropped image
+                if (croppedAnnotations.Count > 0)
+                {
+                    ExceptionHandler.SafeExecute(() =>
+                    {
+                        using (var g = Graphics.FromImage(croppedImage))
+                        {
+                            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                            foreach (var annotation in croppedAnnotations)
+                            {
+                                ExceptionHandler.SafeExecute(() =>
+                                {
+                                    // Validate annotation has valid properties before drawing
+                                    if (annotation != null && annotation.Font != null)
+                                    {
+                                        DrawAnnotation(g, annotation);
+                                    }
+                                }, "drawing individual annotation"); // Silent failure for individual annotations
+                            }
+                        }
+                    }, "applying annotations to cropped image", "Annotations could not be applied to the cropped image.");
+                }
+
+                // Update the current screenshot safely
+                ExceptionHandler.SafeExecute(() =>
+                {
+                    var oldScreenshot = screenshot;
+                    var oldWorkingImage = workingImage;
+                    
+                    screenshot = new Bitmap(croppedImage);
+                    workingImage = new Bitmap(croppedImage);
+                    annotations = new List<AnnotationObject>(croppedAnnotations);
+                    
+                    // Dispose old images
+                    oldScreenshot?.Dispose();
+                    oldWorkingImage?.Dispose();
+                    
+                    Logger.LogInfo("Successfully updated main images with cropped version", "ApplyCrop");
+                }, "updating main images", "Failed to update the main image with the crop.");
+
+                // Update the current screenshot item if available
+                if (currentScreenshotIndex >= 0 && currentScreenshotIndex < screenshots.Count)
+                {
+                    ExceptionHandler.SafeExecute(() =>
+                    {
+                        var currentItem = screenshots[currentScreenshotIndex];
+                        currentItem.OriginalImage?.Dispose();
+                        currentItem.WorkingImage?.Dispose();
+                        currentItem.Thumbnail?.Dispose();
+                        
+                        currentItem.OriginalImage = new Bitmap(croppedImage);
+                        currentItem.WorkingImage = new Bitmap(croppedImage);
+                        currentItem.Annotations = new List<AnnotationObject>(croppedAnnotations);
+                        
+                        // Create new thumbnail
+                        const int thumbnailSize = 120;
+                        var aspectRatio = (float)croppedImage.Width / croppedImage.Height;
+                        int thumbWidth = aspectRatio > 1 ? thumbnailSize : (int)(thumbnailSize * aspectRatio);
+                        int thumbHeight = aspectRatio > 1 ? (int)(thumbnailSize / aspectRatio) : thumbnailSize;
+                        
+                        currentItem.Thumbnail = new Bitmap(thumbWidth, thumbHeight);
+                        using (var g = Graphics.FromImage(currentItem.Thumbnail))
+                        {
+                            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                            g.DrawImage(croppedImage, 0, 0, thumbWidth, thumbHeight);
+                        }
+                        
+                        Logger.LogInfo("Successfully updated screenshot item with cropped version", "ApplyCrop");
+                    }, "updating screenshot item", "Failed to update the screenshot item, but the main image was cropped successfully.");
+                }
+
+                // Dispose the temporary cropped image
+                croppedImage?.Dispose();
+
+                // Reset crop state
+                cropRectangle = Rectangle.Empty;
+                isCropping = false;
+                
+                // Update UI safely
+                ExceptionHandler.SafeExecute(() =>
+                {
+                    // Safely dispose old image and set new one
+                    var oldImage = pictureBox.Image;
+                    pictureBox.Image = new Bitmap(workingImage);
+                    oldImage?.Dispose();
+                    
+                    UpdateImageDisplay();
+                    
+                    // Update thumbnail panel if method exists and is accessible
+                    ExceptionHandler.SafeExecute(() =>
+                    {
+                        UpdateThumbnailPanel();
+                    }, "updating thumbnail panel"); // Silent failure for thumbnail panel
+                    
+                    statusLabel.Text = "Image cropped successfully";
+                    SetAnnotationTool(AnnotationTool.Select);
+                    pictureBox.Invalidate();
+                    
+                    Logger.LogInfo($"Crop operation completed successfully. New image size: {screenshot.Width}x{screenshot.Height}", "ApplyCrop");
+                }, "updating UI after crop", "The image was cropped successfully, but there was an issue updating the display.");
+            }
+            catch (Exception ex)
+            {
+                // Reset crop state on any error
+                cropRectangle = Rectangle.Empty;
+                isCropping = false;
+                Logger.LogError("Unexpected error during crop operation", "ApplyCrop", ex);
+                ExceptionHandler.HandleUnexpectedException(ex, operation);
+                statusLabel.Text = "Crop operation failed";
             }
         }
 
@@ -2100,8 +2539,18 @@ namespace Blueshot
 
             if (currentTool == AnnotationTool.Text)
             {
-                // For text tool, create inline text editor
-                CreateInlineTextEditor(imagePoint);
+                // For text tool, check if we have a region or just a point
+                var width = Math.Abs(imagePoint.X - startPoint.X);
+                var height = Math.Abs(imagePoint.Y - startPoint.Y);
+                
+                if (width > 10 || height > 10) // If user drew a region
+                {
+                    CreateTextRegionEditor(startPoint, imagePoint);
+                }
+                else // Single click - create at point
+                {
+                    CreateInlineTextEditor(imagePoint);
+                }
                 return;
             }
 
@@ -2407,20 +2856,22 @@ namespace Blueshot
                 Font = new Font("Segoe UI", 10)
             };
 
-            var okButton = new Button
+            var okButton = new RoundedButton
             {
                 Text = "OK",
                 Location = new Point(195, 50),
                 Size = new Size(75, 23),
-                DialogResult = DialogResult.OK
+                DialogResult = DialogResult.OK,
+                CornerRadius = 5
             };
 
-            var cancelButton = new Button
+            var cancelButton = new RoundedButton
             {
                 Text = "Cancel",
                 Location = new Point(115, 50),
                 Size = new Size(75, 23),
-                DialogResult = DialogResult.Cancel
+                DialogResult = DialogResult.Cancel,
+                CornerRadius = 5
             };
 
             inputForm.Controls.AddRange(new Control[] { textBox, okButton, cancelButton });
@@ -2448,6 +2899,79 @@ namespace Blueshot
             }
 
             inputForm.Dispose();
+        }
+
+        private void CreateTextRegionEditor(Point startPoint, Point endPoint)
+        {
+            // Normalize the rectangle coordinates
+            var left = Math.Min(startPoint.X, endPoint.X);
+            var top = Math.Min(startPoint.Y, endPoint.Y);
+            var right = Math.Max(startPoint.X, endPoint.X);
+            var bottom = Math.Max(startPoint.Y, endPoint.Y);
+            
+            var regionRect = new Rectangle(left, top, right - left, bottom - top);
+
+            // Create a new text annotation with the region boundaries
+            editingTextAnnotation = new AnnotationObject
+            {
+                Tool = AnnotationTool.Text,
+                StartPoint = new Point(left, top),
+                EndPoint = new Point(right, bottom),
+                Color = annotationColor,
+                Thickness = annotationThickness,
+                Text = "",
+                Font = new Font("Segoe UI", 12 + annotationThickness * 2, FontStyle.Regular),
+                IsTextRegion = true // Flag to indicate this is a region-based text
+            };
+            
+            annotations.Add(editingTextAnnotation);
+            ShowRegionalTextEditor(editingTextAnnotation, regionRect);
+        }
+
+        private void ShowRegionalTextEditor(AnnotationObject textAnnotation, Rectangle imageRect)
+        {
+            // Remove any existing inline text editor
+            HideInlineTextEditor();
+
+            editingTextAnnotation = textAnnotation;
+
+            // Calculate display position and size
+            var displayRect = new Rectangle(
+                (int)(imageRect.X * zoomFactor) - imagePanel.HorizontalScroll.Value + pictureBox.Left,
+                (int)(imageRect.Y * zoomFactor) - imagePanel.VerticalScroll.Value + pictureBox.Top,
+                (int)(imageRect.Width * zoomFactor),
+                (int)(imageRect.Height * zoomFactor)
+            );
+
+            // Ensure minimum size
+            if (displayRect.Width < 100) displayRect.Width = 100;
+            if (displayRect.Height < 40) displayRect.Height = 40;
+
+            // Create regional text box
+            inlineTextBox = new TextBox
+            {
+                Text = textAnnotation.Text ?? "",
+                Font = new Font("Segoe UI", Math.Max(8, (int)(textAnnotation.Font.Size * zoomFactor * 0.6f)), FontStyle.Regular),
+                ForeColor = textAnnotation.Color,
+                BackColor = Color.White,
+                BorderStyle = BorderStyle.FixedSingle,
+                Location = displayRect.Location,
+                Size = displayRect.Size,
+                Multiline = true,
+                WordWrap = true,
+                ScrollBars = ScrollBars.Vertical
+            };
+
+            // Event handlers
+            inlineTextBox.KeyDown += InlineTextBox_KeyDown;
+            inlineTextBox.LostFocus += InlineTextBox_LostFocus;
+            inlineTextBox.TextChanged += InlineTextBox_TextChanged;
+
+            // Add to image panel (so it moves with the image)
+            imagePanel.Controls.Add(inlineTextBox);
+            inlineTextBox.BringToFront();
+            inlineTextBox.Focus();
+            inlineTextBox.SelectAll();
         }
 
         private ResizeHandle GetResizeHandle(AnnotationObject annotation, Point point)
@@ -2653,7 +3177,92 @@ namespace Blueshot
                             g.DrawLine(pen, displayCurrent, arrowPoint2);
                         }
                         break;
+
+                    case AnnotationTool.Text:
+                        // Draw preview rectangle for text region
+                        var textRect = new Rectangle(
+                            Math.Min(displayStart.X, displayCurrent.X),
+                            Math.Min(displayStart.Y, displayCurrent.Y),
+                            Math.Abs(displayCurrent.X - displayStart.X),
+                            Math.Abs(displayCurrent.Y - displayStart.Y)
+                        );
+                        
+                        // Draw dashed border to indicate text region
+                        using (var pen = new Pen(annotationColor, Math.Max(1, displayThickness)))
+                        {
+                            pen.DashStyle = System.Drawing.Drawing2D.DashStyle.Dash;
+                            g.DrawRectangle(pen, textRect);
+                        }
+                        
+                        // Draw "Text" label in the center
+                        if (textRect.Width > 40 && textRect.Height > 20)
+                        {
+                            using (var brush = new SolidBrush(annotationColor))
+                            using (var font = new Font("Segoe UI", Math.Max(8, displayThickness + 8), FontStyle.Regular))
+                            {
+                                var text = "Text";
+                                var textSize = g.MeasureString(text, font);
+                                var textPos = new PointF(
+                                    textRect.X + (textRect.Width - textSize.Width) / 2,
+                                    textRect.Y + (textRect.Height - textSize.Height) / 2
+                                );
+                                g.DrawString(text, font, brush, textPos);
+                            }
+                        }
+                        break;
                 }
+            }
+
+            // Draw crop rectangle if in crop mode
+            if (currentTool == AnnotationTool.Crop && !cropRectangle.IsEmpty)
+            {
+                // Convert crop rectangle to display coordinates
+                var displayCropRect = new Rectangle(
+                    (int)(cropRectangle.X * zoomFactor),
+                    (int)(cropRectangle.Y * zoomFactor),
+                    (int)(cropRectangle.Width * zoomFactor),
+                    (int)(cropRectangle.Height * zoomFactor)
+                );
+
+                // Draw crop selection rectangle with dashed border
+                using (var pen = new Pen(Color.Red, 2))
+                {
+                    pen.DashStyle = System.Drawing.Drawing2D.DashStyle.Dash;
+                    g.DrawRectangle(pen, displayCropRect);
+                }
+
+                // Draw crop area overlay (darken outside area)
+                var imageRect = new Rectangle(0, 0, pictureBox.Width, pictureBox.Height);
+                using (var brush = new SolidBrush(Color.FromArgb(100, Color.Black)))
+                {
+                    // Top area
+                    if (displayCropRect.Top > 0)
+                    {
+                        g.FillRectangle(brush, new Rectangle(0, 0, imageRect.Width, displayCropRect.Top));
+                    }
+                    // Bottom area
+                    if (displayCropRect.Bottom < imageRect.Height)
+                    {
+                        g.FillRectangle(brush, new Rectangle(0, displayCropRect.Bottom, imageRect.Width, imageRect.Height - displayCropRect.Bottom));
+                    }
+                    // Left area
+                    if (displayCropRect.Left > 0)
+                    {
+                        g.FillRectangle(brush, new Rectangle(0, displayCropRect.Top, displayCropRect.Left, displayCropRect.Height));
+                    }
+                    // Right area
+                    if (displayCropRect.Right < imageRect.Width)
+                    {
+                        g.FillRectangle(brush, new Rectangle(displayCropRect.Right, displayCropRect.Top, imageRect.Width - displayCropRect.Right, displayCropRect.Height));
+                    }
+                }
+
+                // Draw corner handles for crop rectangle
+                var handleSize = 8;
+                DrawCropHandle(g, displayCropRect.Location, handleSize);
+                DrawCropHandle(g, new Point(displayCropRect.Right, displayCropRect.Top), handleSize);
+                DrawCropHandle(g, new Point(displayCropRect.Left, displayCropRect.Bottom), handleSize);
+                DrawCropHandle(g, new Point(displayCropRect.Right, displayCropRect.Bottom), handleSize);
             }
 
             // Draw selection handles for selected annotation
@@ -2732,6 +3341,26 @@ namespace Blueshot
             }
         }
 
+        private void DrawCropHandle(Graphics g, Point center, int size)
+        {
+            var handleRect = new Rectangle(
+                center.X - size / 2,
+                center.Y - size / 2,
+                size,
+                size
+            );
+
+            // White fill with red border for crop handles
+            using (var brush = new SolidBrush(Color.White))
+            {
+                g.FillRectangle(brush, handleRect);
+            }
+            using (var pen = new Pen(Color.Red, 2))
+            {
+                g.DrawRectangle(pen, handleRect);
+            }
+        }
+
         private void UpdateImageDisplay()
         {
             if (screenshot == null) return;
@@ -2776,15 +3405,32 @@ namespace Blueshot
 
         private void CenterImage()
         {
-            if (imagePanel.ClientSize.Width > pictureBox.Width)
-                pictureBox.Left = (imagePanel.ClientSize.Width - pictureBox.Width) / 2;
-            else
-                pictureBox.Left = 0;
+            if (mainContainer == null || pictureBox == null) return;
 
-            if (imagePanel.ClientSize.Height > pictureBox.Height)
-                pictureBox.Top = (imagePanel.ClientSize.Height - pictureBox.Height) / 2;
+            // Get the available area (excluding scroll bars if they exist)
+            var availableSize = mainContainer.ClientSize;
+            
+            // If image is smaller than container, center it
+            if (availableSize.Width > pictureBox.Width)
+            {
+                pictureBox.Left = (availableSize.Width - pictureBox.Width) / 2;
+            }
             else
+            {
+                pictureBox.Left = 0;
+            }
+
+            if (availableSize.Height > pictureBox.Height)
+            {
+                pictureBox.Top = (availableSize.Height - pictureBox.Height) / 2;
+            }
+            else
+            {
                 pictureBox.Top = 0;
+            }
+
+            // Update the scroll bars when the image size changes
+            mainContainer.AutoScrollMinSize = pictureBox.Size;
         }
 
         private void UpdateStatusLabels()
@@ -2843,6 +3489,35 @@ namespace Blueshot
             {
                 this.FormBorderStyle = FormBorderStyle.None;
                 this.WindowState = FormWindowState.Maximized;
+            }
+        }
+
+        private void ToggleMaximize()
+        {
+            if (this.WindowState == FormWindowState.Maximized)
+            {
+                this.WindowState = FormWindowState.Normal;
+            }
+            else
+            {
+                this.WindowState = FormWindowState.Maximized;
+            }
+            
+            // Update the maximize button icon to reflect the new state
+            UpdateMaximizeButtonIcon();
+        }
+
+        private void UpdateMaximizeButtonIcon()
+        {
+            // Find the maximize button in the toolbar and update its icon
+            foreach (ToolStripItem item in toolStrip.Items)
+            {
+                if (item is ToolStripButton button && button.ToolTipText == "Maximize/Restore Window")
+                {
+                    button.Image?.Dispose();
+                    button.Image = CreateMaximizeIcon();
+                    break;
+                }
             }
         }
 
@@ -3039,7 +3714,16 @@ namespace Blueshot
             switch (e.KeyCode)
             {
                 case Keys.Escape:
-                    if (selectedAnnotation != null)
+                    if (currentTool == AnnotationTool.Crop && !cropRectangle.IsEmpty)
+                    {
+                        // Cancel crop mode
+                        cropRectangle = Rectangle.Empty;
+                        isCropping = false;
+                        statusLabel.Text = "Crop mode - Click and drag to select area to crop, press Enter to apply";
+                        pictureBox.Invalidate();
+                        e.Handled = true;
+                    }
+                    else if (selectedAnnotation != null)
                     {
                         // Deselect annotation
                         selectedAnnotation.IsSelected = false;
@@ -3062,8 +3746,28 @@ namespace Blueshot
                     }
                     break;
                 case Keys.Enter:
-                case Keys.S when e.Control && !e.Shift:
-                    QuickSave();
+                    if (currentTool == AnnotationTool.Crop && !cropRectangle.IsEmpty)
+                    {
+                        try
+                        {
+                            // Apply crop
+                            ApplyCrop();
+                            e.Handled = true;
+                        }
+                        catch (Exception ex)
+                        {
+                            MessageBox.Show($"Error during crop operation: {ex.Message}", "Crop Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            // Reset crop state on error
+                            cropRectangle = Rectangle.Empty;
+                            isCropping = false;
+                            statusLabel.Text = "Crop operation failed";
+                            e.Handled = true;
+                        }
+                    }
+                    else if (!e.Control && !e.Shift)
+                    {
+                        QuickSave();
+                    }
                     break;
                 case Keys.S when e.Control && e.Shift:
                     SaveAs();
@@ -3193,6 +3897,12 @@ namespace Blueshot
         private void OnFormResize(object sender, EventArgs e)
         {
             CenterImage();
+        }
+
+        private void OnSizeChanged(object sender, EventArgs e)
+        {
+            // Update maximize button icon when window state changes
+            UpdateMaximizeButtonIcon();
         }
 
         protected override void Dispose(bool disposing)

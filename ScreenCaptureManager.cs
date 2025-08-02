@@ -68,6 +68,24 @@ namespace Blueshot
             }
         }
 
+        public Bitmap CaptureCurrentScreenWithoutTaskbar()
+        {
+            try
+            {
+                // Get the primary screen (current screen)
+                var primaryScreen = Screen.PrimaryScreen;
+                
+                // Get the working area (excludes taskbar and other system UI)
+                var workingArea = primaryScreen.WorkingArea;
+                
+                return CaptureRegion(workingArea);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to capture current screen without taskbar: {ex.Message}", ex);
+            }
+        }
+
         private Rectangle GetVirtualScreenBounds()
         {
             int left = int.MaxValue;
@@ -122,7 +140,8 @@ namespace Blueshot
         Region,
         FullScreen,
         ActiveWindow,
-        Window
+        Window,
+        CurrentScreenWithoutTaskbar
     }
 
     public class CaptureSettings

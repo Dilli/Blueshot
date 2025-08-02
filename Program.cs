@@ -11,12 +11,20 @@ namespace Blueshot
         [STAThread]
         static void Main()
         {
-            // Enable visual styles for modern Windows appearance
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
-
+            // Initialize logging first
+            Logger.LogApplicationStart();
+            
+            // Initialize global exception handling
+            ExceptionHandler.Initialize();
+            
             try
             {
+                // Enable visual styles for modern Windows appearance
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+                
+                Logger.LogInfo("Application initialization completed", "Program");
+
                 // Start the main application
                 var mainForm = new MainForm();
                 
@@ -25,12 +33,18 @@ namespace Blueshot
                 mainForm.ShowInTaskbar = false;
                 mainForm.Show();
                 
+                Logger.LogInfo("Starting application message loop", "Program");
                 Application.Run(mainForm);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"An unexpected error occurred: {ex.Message}\n\nStack Trace:\n{ex.StackTrace}", 
-                    "Blueshot Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Logger.LogError("Critical error in main application", "Program", ex);
+                ExceptionHandler.HandleExpectedException(ex, "starting the application",
+                    "A critical error occurred while starting Blueshot. Please check the log files for details.");
+            }
+            finally
+            {
+                Logger.LogApplicationEnd();
             }
         }
     }

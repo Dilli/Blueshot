@@ -15,11 +15,13 @@ namespace Blueshot
 
         private const int HOTKEY_ID_PRIMARY = 9000;
         private const int HOTKEY_ID_FALLBACK = 9001;
+        private const int HOTKEY_ID_CURRENT_SCREEN = 9002;
         
         // Modifiers
         private const uint MOD_NONE = 0x0000;
         private const uint MOD_CTRL = 0x0002;
         private const uint MOD_SHIFT = 0x0004;
+        private const uint MOD_ALT = 0x0001;
         
         // Virtual key codes
         private const uint VK_SNAPSHOT = 0x2C; // Print Screen key
@@ -28,10 +30,14 @@ namespace Blueshot
         private IntPtr windowHandle;
         private bool primaryHotkeyRegistered = false;
         private bool fallbackHotkeyRegistered = false;
+        private bool currentScreenHotkeyRegistered = false;
         private string registeredHotkeyDescription = "";
+        private string currentScreenHotkeyDescription = "";
 
         public event EventHandler HotkeyPressed;
+        public event EventHandler CurrentScreenHotkeyPressed;
         public string RegisteredHotkeyDescription => registeredHotkeyDescription;
+        public string CurrentScreenHotkeyDescription => currentScreenHotkeyDescription;
 
         public GlobalHotkey(IntPtr handle)
         {
@@ -40,14 +46,13 @@ namespace Blueshot
 
         public bool RegisterHotkey()
         {
-            // First try to register Print Screen
+            // First try to register Print Screen for region capture
             try
             {
                 primaryHotkeyRegistered = RegisterHotKey(windowHandle, HOTKEY_ID_PRIMARY, MOD_NONE, VK_SNAPSHOT);
                 if (primaryHotkeyRegistered)
                 {
                     registeredHotkeyDescription = "Print Screen";
-                    return true;
                 }
             }
             catch (Exception)
@@ -55,23 +60,47 @@ namespace Blueshot
                 primaryHotkeyRegistered = false;
             }
 
-            // If Print Screen failed, try Ctrl+Shift+F12 as fallback
+            // Try to register Alt+Print Screen for current screen capture (without taskbar)
             try
             {
-                fallbackHotkeyRegistered = RegisterHotKey(windowHandle, HOTKEY_ID_FALLBACK, MOD_CTRL | MOD_SHIFT, VK_F12);
-                if (fallbackHotkeyRegistered)
+                currentScreenHotkeyRegistered = RegisterHotKey(windowHandle, HOTKEY_ID_CURRENT_SCREEN, MOD_ALT, VK_SNAPSHOT);
+                if (currentScreenHotkeyRegistered)
                 {
-                    registeredHotkeyDescription = "Ctrl+Shift+F12";
-                    return true;
+                    currentScreenHotkeyDescription = "Alt+Print Screen";
                 }
             }
             catch (Exception)
             {
-                fallbackHotkeyRegistered = false;
+                currentScreenHotkeyRegistered = false;
             }
 
-            registeredHotkeyDescription = "";
-            return false;
+            // If Print Screen failed, try Ctrl+Shift+F12 as fallback for region capture
+            if (!primaryHotkeyRegistered)
+            {
+                try
+                {
+                    fallbackHotkeyRegistered = RegisterHotKey(windowHandle, HOTKEY_ID_FALLBACK, MOD_CTRL | MOD_SHIFT, VK_F12);
+                    if (fallbackHotkeyRegistered)
+                    {
+                        registeredHotkeyDescription = "Ctrl+Shift+F12";
+                    }
+                }
+                catch (Exception)
+                {
+                    fallbackHotkeyRegistered = false;
+                }
+            }
+
+            // Return true if at least one hotkey was registered
+            bool anyRegistered = primaryHotkeyRegistered || fallbackHotkeyRegistered || currentScreenHotkeyRegistered;
+            
+            if (!anyRegistered)
+            {
+                registeredHotkeyDescription = "";
+                currentScreenHotkeyDescription = "";
+            }
+            
+            return anyRegistered;
         }
 
         public void UnregisterHotkey()
@@ -88,7 +117,14 @@ namespace Blueshot
                 fallbackHotkeyRegistered = false;
             }
             
+            if (currentScreenHotkeyRegistered)
+            {
+                UnregisterHotKey(windowHandle, HOTKEY_ID_CURRENT_SCREEN);
+                currentScreenHotkeyRegistered = false;
+            }
+            
             registeredHotkeyDescription = "";
+            currentScreenHotkeyDescription = "";
         }
 
         public bool ProcessHotkey(Message m)
@@ -101,6 +137,11 @@ namespace Blueshot
                 if (hotkeyId == HOTKEY_ID_PRIMARY || hotkeyId == HOTKEY_ID_FALLBACK)
                 {
                     HotkeyPressed?.Invoke(this, EventArgs.Empty);
+                    return true;
+                }
+                else if (hotkeyId == HOTKEY_ID_CURRENT_SCREEN)
+                {
+                    CurrentScreenHotkeyPressed?.Invoke(this, EventArgs.Empty);
                     return true;
                 }
             }

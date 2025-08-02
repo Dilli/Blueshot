@@ -8,8 +8,9 @@ namespace Blueshot
 {
     public partial class MainForm : Form
     {
-        private Button captureButton;
-        private Button settingsButton;
+        private RoundedButton captureButton;
+        private RoundedButton currentScreenButton;
+        private RoundedButton settingsButton;
         private Label statusLabel;
         private NotifyIcon trayIcon;
         private ContextMenuStrip trayMenu;
@@ -40,6 +41,7 @@ namespace Blueshot
             this.StartPosition = FormStartPosition.CenterScreen;
             this.FormBorderStyle = FormBorderStyle.None;
             this.MaximizeBox = false;
+            this.ShowInTaskbar = true;  // Ensure it shows in taskbar by default
             this.Icon = LoadCustomIcon();
             this.BackColor = Color.FromArgb(20, 20, 30);
             this.KeyPreview = true; // Enable form to receive key events
@@ -48,7 +50,7 @@ namespace Blueshot
             this.Region = CreateRoundedRegion(this.Width, this.Height, 15);
 
             // Add close button since there's no title bar
-            var closeButton = new Button
+            var closeButton = new RoundedButton
             {
                 Text = "✕",
                 Font = new Font("Segoe UI", 12, FontStyle.Bold),
@@ -57,7 +59,8 @@ namespace Blueshot
                 BackColor = Color.Transparent,
                 ForeColor = Color.FromArgb(200, 200, 200),
                 FlatStyle = FlatStyle.Flat,
-                Anchor = AnchorStyles.Top | AnchorStyles.Right
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                CornerRadius = 5
             };
             closeButton.FlatAppearance.BorderSize = 0;
             closeButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(232, 17, 35);
@@ -65,7 +68,7 @@ namespace Blueshot
             closeButton.Click += (s, e) => 
             {
                 this.Hide();
-                this.ShowInTaskbar = false;
+                // Don't set ShowInTaskbar = false - let it stay available for when window is shown again
             };
             closeButton.MouseEnter += (s, e) => closeButton.ForeColor = Color.White;
             closeButton.MouseLeave += (s, e) => closeButton.ForeColor = Color.FromArgb(200, 200, 200);
@@ -76,7 +79,7 @@ namespace Blueshot
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 4,
+                RowCount = 5,
                 Padding = new Padding(20),
                 BackColor = Color.Transparent
             };
@@ -93,7 +96,7 @@ namespace Blueshot
             };
 
             // Capture button
-            captureButton = new Button
+            captureButton = new RoundedButton
             {
                 Text = "&Start Region Capture (F1)",
                 Font = new Font("Segoe UI", 10),
@@ -101,14 +104,31 @@ namespace Blueshot
                 BackColor = Color.FromArgb(0, 120, 215),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                Anchor = AnchorStyles.None
+                Anchor = AnchorStyles.None,
+                CornerRadius = 5
             };
             captureButton.FlatAppearance.BorderSize = 0;
             captureButton.FlatAppearance.BorderColor = Color.FromArgb(0, 100, 200);
             captureButton.Click += CaptureButton_Click;
 
+            // Current screen capture button
+            currentScreenButton = new RoundedButton
+            {
+                Text = "&Current Screen (No Taskbar) (F3)",
+                Font = new Font("Segoe UI", 10),
+                Size = new Size(250, 40),
+                BackColor = Color.FromArgb(0, 150, 100),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Anchor = AnchorStyles.None,
+                CornerRadius = 5
+            };
+            currentScreenButton.FlatAppearance.BorderSize = 0;
+            currentScreenButton.FlatAppearance.BorderColor = Color.FromArgb(0, 130, 80);
+            currentScreenButton.Click += CurrentScreenButton_Click;
+
             // Settings button
-            settingsButton = new Button
+            settingsButton = new RoundedButton
             {
                 Text = "&Settings (F2)",
                 Font = new Font("Segoe UI", 10),
@@ -116,7 +136,8 @@ namespace Blueshot
                 BackColor = Color.FromArgb(64, 64, 64),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                Anchor = AnchorStyles.None
+                Anchor = AnchorStyles.None,
+                CornerRadius = 5
             };
             settingsButton.FlatAppearance.BorderSize = 0;
             settingsButton.FlatAppearance.BorderColor = Color.FromArgb(80, 80, 80);
@@ -125,7 +146,7 @@ namespace Blueshot
             // Status label
             statusLabel = new Label
             {
-                Text = "Ready • Print Screen: Capture • F1: Capture • F2: Settings • Esc: Hide",
+                Text = "Ready • Print Screen: Region • Alt+Print Screen: Current Screen • F1: Region • F2: Settings • F3: Current Screen • Esc: Hide",
                 Font = new Font("Segoe UI", 9),
                 ForeColor = Color.FromArgb(150, 150, 150),
                 TextAlign = ContentAlignment.MiddleCenter,
@@ -135,8 +156,9 @@ namespace Blueshot
             // Add controls to panel
             mainPanel.Controls.Add(titleLabel, 0, 0);
             mainPanel.Controls.Add(captureButton, 0, 1);
-            mainPanel.Controls.Add(settingsButton, 0, 2);
-            mainPanel.Controls.Add(statusLabel, 0, 3);
+            mainPanel.Controls.Add(currentScreenButton, 0, 2);
+            mainPanel.Controls.Add(settingsButton, 0, 3);
+            mainPanel.Controls.Add(statusLabel, 0, 4);
 
             // Set row styles
             mainPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 30));
@@ -151,6 +173,7 @@ namespace Blueshot
         {
             trayMenu = new ContextMenuStrip();
             trayMenu.Items.Add("Capture Region", null, (s, e) => StartRegionCapture());
+            trayMenu.Items.Add("Capture Current Screen (no taskbar)", null, (s, e) => StartCurrentScreenCapture());
             trayMenu.Items.Add("-");
             trayMenu.Items.Add("Show Window", null, (s, e) => ShowMainWindow());
             trayMenu.Items.Add("Settings", null, (s, e) => SettingsButton_Click(this, EventArgs.Empty));
@@ -168,6 +191,15 @@ namespace Blueshot
                 {
                     trayMenu.Items[0].Text = "Capture Region";
                 }
+                
+                if (globalHotkey != null && !string.IsNullOrEmpty(globalHotkey.CurrentScreenHotkeyDescription))
+                {
+                    trayMenu.Items[1].Text = $"Capture Current Screen (no taskbar) ({globalHotkey.CurrentScreenHotkeyDescription})";
+                }
+                else
+                {
+                    trayMenu.Items[1].Text = "Capture Current Screen (no taskbar)";
+                }
             };
 
             trayIcon = new NotifyIcon
@@ -179,6 +211,11 @@ namespace Blueshot
             };
             trayIcon.DoubleClick += (s, e) => StartRegionCapture();
             trayIcon.BalloonTipTitle = "Blueshot";
+            
+            // Ensure the icon is properly displayed in the system tray
+            // This helps with notification icon display issues
+            RefreshTrayIcon();
+            
             // Don't show initial balloon tip here - it will be shown after hotkey registration
         }
 
@@ -189,19 +226,35 @@ namespace Blueshot
                 globalHotkey = new GlobalHotkey(this.Handle);
                 globalHotkey.HotkeyPressed += (s, e) => 
                 {
-                    // Run capture on UI thread
+                    // Run region capture on UI thread
                     this.BeginInvoke(new Action(() => StartRegionCapture()));
+                };
+                
+                globalHotkey.CurrentScreenHotkeyPressed += (s, e) => 
+                {
+                    // Run current screen capture on UI thread
+                    this.BeginInvoke(new Action(() => StartCurrentScreenCapture()));
                 };
                 
                 bool hotkeyRegistered = globalHotkey.RegisterHotkey();
                 
                 if (hotkeyRegistered)
                 {
-                    // Show success message with the actual hotkey that was registered
+                    // Show success message with the actual hotkeys that were registered
                     string hotkeyDesc = globalHotkey.RegisteredHotkeyDescription;
-                    trayIcon.ShowBalloonTip(3000, "Blueshot Ready", 
-                        $"Screenshot hotkey registered: {hotkeyDesc}", 
-                        ToolTipIcon.Info);
+                    string currentScreenDesc = globalHotkey.CurrentScreenHotkeyDescription;
+                    
+                    string message = "Screenshot hotkeys registered:";
+                    if (!string.IsNullOrEmpty(hotkeyDesc))
+                    {
+                        message += $"\n• {hotkeyDesc} - Region capture";
+                    }
+                    if (!string.IsNullOrEmpty(currentScreenDesc))
+                    {
+                        message += $"\n• {currentScreenDesc} - Current screen (no taskbar)";
+                    }
+                    
+                    trayIcon.ShowBalloonTip(3000, "Blueshot Ready", message, ToolTipIcon.Info);
                 }
                 else
                 {
@@ -220,8 +273,9 @@ namespace Blueshot
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error initializing global hotkey: {ex.Message}", 
-                    "Hotkey Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Logger.LogError("Error initializing global hotkey", "InitializeGlobalHotkey", ex);
+                ExceptionHandler.HandleExpectedException(ex, "initializing global hotkey", 
+                    "Error initializing global hotkey. You can still use the system tray to capture screenshots.");
                     
                 // Show fallback notification
                 trayIcon.ShowBalloonTip(5000, "Blueshot Ready", 
@@ -240,6 +294,11 @@ namespace Blueshot
         private void CaptureButton_Click(object sender, EventArgs e)
         {
             StartRegionCapture();
+        }
+
+        private void CurrentScreenButton_Click(object sender, EventArgs e)
+        {
+            StartCurrentScreenCapture();
         }
 
         private void SettingsButton_Click(object sender, EventArgs e)
@@ -274,11 +333,72 @@ namespace Blueshot
             }
         }
 
+        private void StartCurrentScreenCapture()
+        {
+            statusLabel.Text = "Capturing current screen...";
+            this.Hide();
+
+            try
+            {
+                var captureManager = new ScreenCaptureManager();
+                var screenshot = captureManager.CaptureCurrentScreenWithoutTaskbar();
+
+                if (screenshot != null && screenshot.Width > 0 && screenshot.Height > 0)
+                {
+                    if (previewForm == null || previewForm.IsDisposed)
+                    {
+                        previewForm = new PreviewForm();
+                        previewForm.FormClosed += (s, e) => previewForm = null;
+                    }
+
+                    previewForm.AddScreenshot(screenshot);
+
+                    if (!previewForm.Visible)
+                    {
+                        previewForm.Show();
+                    }
+                    else
+                    {
+                        previewForm.BringToFront();
+                    }
+
+                    statusLabel.Text = "Current screen captured successfully";
+                }
+                else
+                {
+                    Logger.LogError("Current screen capture returned null or invalid image");
+                    MessageBox.Show("Failed to capture current screen. Please try again.", "Capture Failed", 
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    statusLabel.Text = "Current screen capture failed";
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error during current screen capture: {ex.Message}");
+                MessageBox.Show($"Error during capture: {ex.Message}", "Error", 
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                statusLabel.Text = "Capture failed";
+            }
+            finally
+            {
+                this.Show();
+            }
+        }
+
         private void OnRegionSelected(object sender, RegionSelectedEventArgs e)
         {
             if (e.SelectedRegion.IsEmpty)
             {
                 statusLabel.Text = "Capture cancelled";
+                return;
+            }
+
+            if (e.SelectedRegion.Width <= 0 || e.SelectedRegion.Height <= 0)
+            {
+                Logger.LogError($"Invalid region selected: {e.SelectedRegion}");
+                MessageBox.Show($"Invalid capture region selected: {e.SelectedRegion.Width}x{e.SelectedRegion.Height}", "Invalid Region", 
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                statusLabel.Text = "Invalid region selected";
                 return;
             }
 
@@ -289,17 +409,21 @@ namespace Blueshot
                 var captureManager = new ScreenCaptureManager();
                 var screenshot = captureManager.CaptureRegion(e.SelectedRegion);
                 
-                if (screenshot != null)
+                if (screenshot != null && screenshot.Width > 0 && screenshot.Height > 0)
                 {
                     ShowPreview(screenshot);
                 }
                 else
                 {
+                    Logger.LogError("Region capture returned null or invalid image");
+                    MessageBox.Show("Failed to capture the selected region. Please try again.", "Capture Failed", 
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     statusLabel.Text = "Failed to capture screenshot";
                 }
             }
             catch (Exception ex)
             {
+                Logger.LogError($"Error capturing region: {ex.Message}");
                 MessageBox.Show($"Error saving screenshot: {ex.Message}", "Error", 
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
                 statusLabel.Text = "Capture failed";
@@ -310,6 +434,24 @@ namespace Blueshot
         {
             try
             {
+                if (screenshot == null)
+                {
+                    Logger.LogError("ShowPreview called with null screenshot");
+                    MessageBox.Show("Cannot show preview: Screenshot is null", "Error", 
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    statusLabel.Text = "Preview failed - no image";
+                    return;
+                }
+                
+                if (screenshot.Width <= 0 || screenshot.Height <= 0)
+                {
+                    Logger.LogError($"ShowPreview called with invalid dimensions: {screenshot.Width}x{screenshot.Height}");
+                    MessageBox.Show($"Cannot show preview: Invalid image dimensions ({screenshot.Width}x{screenshot.Height})", "Error", 
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    statusLabel.Text = "Preview failed - invalid dimensions";
+                    return;
+                }
+
                 if (previewForm == null || previewForm.IsDisposed)
                 {
                     // Create new preview form if it doesn't exist
@@ -340,6 +482,7 @@ namespace Blueshot
             }
             catch (Exception ex)
             {
+                Logger.LogError($"Error showing preview: {ex.Message}");
                 MessageBox.Show($"Error showing preview: {ex.Message}", "Error", 
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
                 statusLabel.Text = "Preview failed";
@@ -368,9 +511,9 @@ namespace Blueshot
 
         private void ShowMainWindow()
         {
+            this.ShowInTaskbar = true;  // Ensure taskbar icon is shown
             this.Show();
             this.WindowState = FormWindowState.Normal;
-            this.ShowInTaskbar = true;
             this.BringToFront();
             this.Activate();
         }
@@ -400,11 +543,11 @@ namespace Blueshot
                 // Instead of asking, just minimize to tray
                 e.Cancel = true;
                 this.Hide();
-                this.ShowInTaskbar = false;
+                // Don't set ShowInTaskbar = false here - let it stay available for when window is shown
                 
                 // Show balloon tip to inform user
                 trayIcon.BalloonTipTitle = "Blueshot";
-                trayIcon.BalloonTipText = "Blueshot is still running. Right-click the tray icon to exit.";
+                trayIcon.BalloonTipText = "Blueshot is still running. Right-click the tray icon to show window or exit.";
                 trayIcon.BalloonTipIcon = ToolTipIcon.Info;
                 trayIcon.ShowBalloonTip(2000);
             }
@@ -428,9 +571,13 @@ namespace Blueshot
                     SettingsButton_Click(this, EventArgs.Empty);
                     e.Handled = true;
                     break;
+                case Keys.F3:
+                    StartCurrentScreenCapture();
+                    e.Handled = true;
+                    break;
                 case Keys.Escape:
                     this.Hide();
-                    this.ShowInTaskbar = false;
+                    // Don't set ShowInTaskbar = false - let it stay available for when window is shown again
                     e.Handled = true;
                     break;
                 case Keys.Enter:
@@ -500,7 +647,25 @@ namespace Blueshot
                 string iconPath = Path.Combine(Application.StartupPath, "icon.ico");
                 if (File.Exists(iconPath))
                 {
-                    return new Icon(iconPath);
+                    // Load and validate the icon
+                    var customIcon = new Icon(iconPath);
+                    
+                    // Ensure the icon is valid for notifications
+                    if (customIcon.Width > 0 && customIcon.Height > 0)
+                    {
+                        return customIcon;
+                    }
+                }
+                
+                // Also try relative path as fallback
+                string relativePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icon.ico");
+                if (File.Exists(relativePath))
+                {
+                    var customIcon = new Icon(relativePath);
+                    if (customIcon.Width > 0 && customIcon.Height > 0)
+                    {
+                        return customIcon;
+                    }
                 }
             }
             catch (Exception ex)
@@ -510,6 +675,39 @@ namespace Blueshot
             
             // Fallback to system icon if custom icon fails to load
             return SystemIcons.Application;
+        }
+
+        private void RefreshTrayIcon()
+        {
+            try
+            {
+                if (trayIcon != null)
+                {
+                    // Force refresh the tray icon to ensure proper display in notifications
+                    // This is especially important for balloon tip icons
+                    trayIcon.Visible = false;
+                    
+                    // Small delay to ensure the icon is removed from tray
+                    Application.DoEvents();
+                    
+                    // Reload the icon
+                    var currentIcon = trayIcon.Icon;
+                    trayIcon.Icon = LoadCustomIcon();
+                    
+                    // Make visible again
+                    trayIcon.Visible = true;
+                    
+                    // Dispose old icon if it was different
+                    if (currentIcon != null && currentIcon != trayIcon.Icon)
+                    {
+                        currentIcon.Dispose();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to refresh tray icon: {ex.Message}");
+            }
         }
     }
 }
