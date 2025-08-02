@@ -49,6 +49,7 @@ namespace Blueshot
             this.BackColor = Color.FromArgb(0, 120, 215);
             this.ForeColor = Color.White;
             this.Font = new Font("Segoe UI", 10);
+            this.cornerRadius = 6; // Default VS Code-like radius
         }
 
         protected override void OnPaint(PaintEventArgs pevent)

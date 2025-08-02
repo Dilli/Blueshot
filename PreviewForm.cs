@@ -29,6 +29,7 @@ namespace Blueshot
         private List<ScreenshotItem> screenshots = new List<ScreenshotItem>();
         private int currentScreenshotIndex = 0;
         private Panel thumbnailPanel;
+        private RoundedPanel thumbnailPanelRounded;
         private RoundedButton previousButton;
         private RoundedButton nextButton;
         private Label screenshotCountLabel;
@@ -36,7 +37,8 @@ namespace Blueshot
         // Annotation tools
         private bool isAnnotating = false;
         private AnnotationTool currentTool = AnnotationTool.None;
-        private Color annotationColor = Color.Red;
+        private Color annotationFillColor = Color.FromArgb(100, Color.Yellow); // Semi-transparent yellow for fills
+        private Color annotationLineColor = Color.FromArgb(255, Color.Red); // Solid red for lines/borders
         private int annotationThickness = 3;
         private bool isDrawing = false;
         private Point startPoint;
@@ -56,6 +58,11 @@ namespace Blueshot
         // Text editing
         private TextBox inlineTextBox = null;
         private AnnotationObject editingTextAnnotation = null;
+        
+        // Direct text input without TextBox control
+        private bool isTypingText = false;
+        private string currentTypingText = "";
+        private int textCursorPosition = 0;
 
         // Crop functionality
         private bool isCropping = false;
@@ -162,13 +169,21 @@ namespace Blueshot
             public AnnotationTool Tool { get; set; }
             public Point StartPoint { get; set; }
             public Point EndPoint { get; set; }
-            public Color Color { get; set; }
+            public Color FillColor { get; set; } = Color.FromArgb(100, Color.Yellow);
+            public Color LineColor { get; set; } = Color.Red;
             public int Thickness { get; set; }
             public bool IsSelected { get; set; }
             public string Text { get; set; } = "";
             public Font Font { get; set; } = new Font("Segoe UI", 12, FontStyle.Regular);
             public int CounterNumber { get; set; } = 0;
             public bool IsTextRegion { get; set; } = false; // Flag for region-based text
+
+            // Legacy property for backward compatibility
+            public Color Color 
+            { 
+                get => LineColor; 
+                set => LineColor = value; 
+            }
 
             public Rectangle GetBounds()
             {
@@ -274,7 +289,9 @@ namespace Blueshot
             public void Move(Point offset)
             {
                 StartPoint = new Point(StartPoint.X + offset.X, StartPoint.Y + offset.Y);
-                if (Tool != AnnotationTool.Text)
+                
+                // Move EndPoint for all annotations except point-based text annotations
+                if (Tool != AnnotationTool.Text || IsTextRegion)
                 {
                     EndPoint = new Point(EndPoint.X + offset.X, EndPoint.Y + offset.Y);
                 }
@@ -354,7 +371,7 @@ namespace Blueshot
                 }
                 
                 // Only update UI components if they are initialized
-                if (thumbnailPanel != null)
+                if (thumbnailPanelRounded != null)
                 {
                     UpdateThumbnailPanel();
                     UpdateNavigationButtons();
@@ -399,11 +416,13 @@ namespace Blueshot
             this.Text = "Screenshot Preview - Blueshot";
             this.Size = new Size(1000, 700);
             this.StartPosition = FormStartPosition.CenterScreen;
-            this.WindowState = FormWindowState.Maximized; // Start maximized
+            // Set borderless style first, then maximize to respect taskbar
             this.FormBorderStyle = FormBorderStyle.None; // Hide title bar
+            this.WindowState = FormWindowState.Normal; // Start normal, then maximize properly
             this.KeyPreview = true;
             this.BackColor = Color.FromArgb(240, 240, 240);
-            this.Icon = SystemIcons.Application;
+            this.ShowInTaskbar = true; // Ensure form shows in taskbar
+            this.Icon = LoadApplicationIcon();
             this.MinimumSize = new Size(600, 400);
 
             // Create menu strip (but don't add it to controls - hidden)
@@ -429,9 +448,80 @@ namespace Blueshot
 
             // Event handlers
             this.KeyDown += OnKeyDown;
+            this.KeyPress += OnKeyPress;
             this.FormClosing += OnFormClosing;
             this.Resize += OnFormResize;
             this.SizeChanged += OnSizeChanged;
+            this.Load += OnFormLoad; // Add Load event handler
+        }
+
+        private void OnFormLoad(object sender, EventArgs e)
+        {
+            // Set window to maximize while respecting taskbar
+            MaximizeRespectingTaskbar();
+        }
+
+        private Icon LoadApplicationIcon()
+        {
+            try
+            {
+                // Try Application.StartupPath first (same as MainForm)
+                string iconPath = Path.Combine(Application.StartupPath, "icon.ico");
+                if (File.Exists(iconPath))
+                {
+                    var customIcon = new Icon(iconPath);
+                    
+                    // Ensure the icon is valid
+                    if (customIcon.Width > 0 && customIcon.Height > 0)
+                    {
+                        return customIcon;
+                    }
+                }
+                
+                // Also try relative path as fallback
+                string relativePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icon.ico");
+                if (File.Exists(relativePath))
+                {
+                    var customIcon = new Icon(relativePath);
+                    if (customIcon.Width > 0 && customIcon.Height > 0)
+                    {
+                        return customIcon;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to load custom application icon", "LoadApplicationIcon", ex);
+            }
+            
+            // Fallback to system application icon
+            return SystemIcons.Application;
+        }
+
+        private void MaximizeRespectingTaskbar()
+        {
+            // Get the working area (screen minus taskbar)
+            Rectangle workingArea = Screen.FromControl(this).WorkingArea;
+            
+            // Set window bounds to working area
+            this.Bounds = workingArea;
+        }
+
+        private bool IsEffectivelyMaximized()
+        {
+            // Check if window is maximized either by WindowState or by bounds matching working area
+            return this.WindowState == FormWindowState.Maximized || 
+                   this.Bounds.Equals(Screen.FromControl(this).WorkingArea);
+        }
+
+        protected override void SetVisibleCore(bool value)
+        {
+            // Ensure the form is always visible in taskbar when shown
+            if (value)
+            {
+                this.ShowInTaskbar = true;
+            }
+            base.SetVisibleCore(value);
         }
 
         private void CreateMenuStrip()
@@ -484,7 +574,9 @@ namespace Blueshot
                 BackColor = Color.FromArgb(245, 245, 245),
                 GripStyle = ToolStripGripStyle.Hidden,
                 Font = new Font("Segoe UI", 9),
-                ImageScalingSize = new Size(24, 24)
+                ImageScalingSize = new Size(32, 32),
+                RenderMode = ToolStripRenderMode.ManagerRenderMode,
+                Renderer = new RoundedToolStripRenderer(6, Color.FromArgb(245, 245, 245), Color.FromArgb(200, 200, 200))
             };
 
             // Save buttons
@@ -537,15 +629,26 @@ namespace Blueshot
             // Separator
             var separator2 = new ToolStripSeparator();
 
-            // Color selector for annotation
-            var annotationColorLabel = new ToolStripLabel("Color:");
-            var annotationColorButton = new ToolStripButton("■", null, ShowColorPicker)
+            // Fill color selector for annotation
+            var fillColorLabel = new ToolStripLabel("Fill:");
+            var fillColorButton = new ToolStripButton("■", null, ShowFillColorPicker)
             {
-                ToolTipText = "Choose Annotation Color",
-                ForeColor = annotationColor,
+                ToolTipText = "Choose Fill Color",
+                ForeColor = annotationFillColor,
                 Font = new Font("Segoe UI", 16, FontStyle.Bold),
                 DisplayStyle = ToolStripItemDisplayStyle.Text,
-                Name = "ColorButton"
+                Name = "FillColorButton"
+            };
+
+            // Line color selector for annotation
+            var lineColorLabel = new ToolStripLabel("Line:");
+            var lineColorButton = new ToolStripButton("■", null, ShowLineColorPicker)
+            {
+                ToolTipText = "Choose Line Color",
+                ForeColor = annotationLineColor,
+                Font = new Font("Segoe UI", 16, FontStyle.Bold),
+                DisplayStyle = ToolStripItemDisplayStyle.Text,
+                Name = "LineColorButton"
             };
 
             // Thickness selector for annotation
@@ -612,7 +715,7 @@ namespace Blueshot
             toolStrip.Items.AddRange(new ToolStripItem[] {
                 saveButton, saveAsButton, copyButton, separator1,
                 zoomInButton, zoomOutButton, actualSizeButton, fitToWindowButton, separator2,
-                annotationColorLabel, annotationColorButton, annotationThicknessLabel, annotationThicknessCombo, separator3,
+                fillColorLabel, fillColorButton, lineColorLabel, lineColorButton, annotationThicknessLabel, annotationThicknessCombo, separator3,
                 counterLabel, counterButton, counterResetButton, separator4,
                 minimizeButton, maximizeButton, closeButton
             });
@@ -625,11 +728,12 @@ namespace Blueshot
                 BackColor = Color.FromArgb(248, 248, 248),
                 GripStyle = ToolStripGripStyle.Hidden,
                 Font = new Font("Segoe UI", 9),
-                ImageScalingSize = new Size(24, 24),
+                ImageScalingSize = new Size(32, 32),
                 Dock = DockStyle.Left,
                 LayoutStyle = ToolStripLayoutStyle.VerticalStackWithOverflow,
                 Width = 90,
-                RenderMode = ToolStripRenderMode.Professional
+                RenderMode = ToolStripRenderMode.ManagerRenderMode,
+                Renderer = new RoundedToolStripRenderer(6, Color.FromArgb(248, 248, 248), Color.FromArgb(200, 200, 200))
             };
 
             // Select tool
@@ -771,15 +875,29 @@ namespace Blueshot
 
         private void CreateThumbnailPanel()
         {
+            // Create the container panel first
             thumbnailPanel = new Panel
             {
                 Height = 200, // Increased from 140 to 200
                 Dock = DockStyle.Bottom,
+                BackColor = Color.Transparent,
+                BorderStyle = BorderStyle.None,
+                Padding = new Padding(10) // Add padding around the rounded panel
+            };
+
+            // Create the rounded panel inside
+            thumbnailPanelRounded = new RoundedPanel
+            {
                 BackColor = Color.FromArgb(250, 250, 250),
-                BorderStyle = BorderStyle.FixedSingle,
-                AutoScroll = false, // Removed vertical scrolling
+                BorderColor = Color.FromArgb(200, 200, 200),
+                BorderWidth = 1,
+                CornerRadius = 8, // VS Code-like rounded corners
+                Dock = DockStyle.Fill,
+                AutoScroll = false,
                 Padding = new Padding(5)
             };
+
+            thumbnailPanel.Controls.Add(thumbnailPanelRounded);
         }
 
         private void CreateNavigationPanel()
@@ -798,13 +916,14 @@ namespace Blueshot
                 Width = 120, // Increased from 80 to 120
                 Height = 45,  // Increased from 30 to 45
                 Location = new Point(15, 8), // Adjusted position
-                BackColor = Color.FromArgb(0, 120, 215),
+                BackColor = Color.FromArgb(0, 122, 204), // VS Code blue
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Font = new Font("Segoe UI", 11, FontStyle.Bold), // Increased font size
-                CornerRadius = 5
+                CornerRadius = 6 // VS Code-like rounded corners
             };
-            previousButton.FlatAppearance.BorderSize = 0;
+            previousButton.FlatAppearance.BorderSize = 1;
+            previousButton.FlatAppearance.BorderColor = Color.FromArgb(0, 122, 204);
             previousButton.Click += (s, e) => NavigateToScreenshot(currentScreenshotIndex - 1);
 
             nextButton = new RoundedButton
@@ -813,13 +932,14 @@ namespace Blueshot
                 Width = 120, // Increased from 80 to 120
                 Height = 45,  // Increased from 30 to 45
                 Location = new Point(145, 8), // Adjusted position
-                BackColor = Color.FromArgb(0, 120, 215),
+                BackColor = Color.FromArgb(0, 122, 204), // VS Code blue
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
                 Font = new Font("Segoe UI", 11, FontStyle.Bold), // Increased font size
-                CornerRadius = 5
+                CornerRadius = 6 // VS Code-like rounded corners
             };
-            nextButton.FlatAppearance.BorderSize = 0;
+            nextButton.FlatAppearance.BorderSize = 1;
+            nextButton.FlatAppearance.BorderColor = Color.FromArgb(0, 122, 204);
             nextButton.Click += (s, e) => NavigateToScreenshot(currentScreenshotIndex + 1);
 
             screenshotCountLabel = new Label
@@ -833,33 +953,37 @@ namespace Blueshot
             };
 
             navPanel.Controls.AddRange(new Control[] { previousButton, nextButton, screenshotCountLabel });
-            thumbnailPanel.Controls.Add(navPanel);
+            thumbnailPanelRounded.Controls.Add(navPanel);
         }
 
         private void CreateStatusStrip()
         {
             statusStrip = new StatusStrip
             {
-                BackColor = Color.FromArgb(240, 240, 240),
+                BackColor = Color.FromArgb(0, 122, 204), // VS Code blue
+                ForeColor = Color.White,
                 Font = new Font("Segoe UI", 9)
             };
 
             statusLabel = new ToolStripStatusLabel("Ready")
             {
                 Spring = true,
-                TextAlign = ContentAlignment.MiddleLeft
+                TextAlign = ContentAlignment.MiddleLeft,
+                ForeColor = Color.White
             };
 
             sizeLabel = new ToolStripStatusLabel("Size: 0 × 0")
             {
                 BorderSides = ToolStripStatusLabelBorderSides.Left,
-                BorderStyle = Border3DStyle.Etched
+                BorderStyle = Border3DStyle.Etched,
+                ForeColor = Color.White
             };
 
             zoomLabel = new ToolStripStatusLabel("Zoom: 100%")
             {
                 BorderSides = ToolStripStatusLabelBorderSides.Left,
-                BorderStyle = Border3DStyle.Etched
+                BorderStyle = Border3DStyle.Etched,
+                ForeColor = Color.White
             };
 
             statusStrip.Items.AddRange(new ToolStripItem[] { statusLabel, sizeLabel, zoomLabel });
@@ -878,24 +1002,24 @@ namespace Blueshot
 
         private Bitmap CreateSaveIcon()
         {
-            var icon = new Bitmap(24, 24);
+            var icon = new Bitmap(32, 32);
             using (var g = Graphics.FromImage(icon))
             {
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
                 
                 // Modern save icon background
                 using (var brush = new System.Drawing.Drawing2D.LinearGradientBrush(
-                    new Point(0, 0), new Point(24, 24),
+                    new Point(0, 0), new Point(32, 32),
                     Color.FromArgb(0, 120, 215), Color.FromArgb(0, 96, 172)))
                 {
-                    g.FillRectangle(brush, 3, 3, 18, 18);
+                    g.FillRectangle(brush, 4, 4, 24, 24);
                 }
                 
                 // Top corner cutout
                 using (var brush = new SolidBrush(Color.Transparent))
                 {
                     g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
-                    var points = new Point[] { new Point(15, 3), new Point(21, 3), new Point(21, 9) };
+                    var points = new Point[] { new Point(20, 4), new Point(28, 4), new Point(28, 12) };
                     g.FillPolygon(brush, points);
                     g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceOver;
                 }
@@ -903,26 +1027,26 @@ namespace Blueshot
                 // Disk slot
                 using (var brush = new SolidBrush(Color.FromArgb(0, 80, 150)))
                 {
-                    g.FillRectangle(brush, 8, 17, 8, 3);
+                    g.FillRectangle(brush, 11, 22, 10, 4);
                 }
                 
                 // Label area with gradient
                 using (var brush = new SolidBrush(Color.FromArgb(240, 240, 240)))
                 {
-                    g.FillRectangle(brush, 6, 7, 12, 8);
+                    g.FillRectangle(brush, 8, 9, 16, 11);
                 }
                 
                 // Highlight for depth
                 using (var pen = new Pen(Color.FromArgb(100, 255, 255, 255), 1))
                 {
-                    g.DrawLine(pen, 4, 4, 4, 20);
-                    g.DrawLine(pen, 4, 4, 14, 4);
+                    g.DrawLine(pen, 5, 5, 5, 27);
+                    g.DrawLine(pen, 5, 5, 19, 5);
                 }
                 
                 // Border
                 using (var pen = new Pen(Color.FromArgb(0, 64, 128), 1))
                 {
-                    g.DrawRectangle(pen, 3, 3, 18, 18);
+                    g.DrawRectangle(pen, 4, 4, 24, 24);
                 }
             }
             return icon;
@@ -930,7 +1054,7 @@ namespace Blueshot
 
         private Bitmap CreateCopyIcon()
         {
-            var icon = new Bitmap(24, 24);
+            var icon = new Bitmap(32, 32);
             using (var g = Graphics.FromImage(icon))
             {
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
@@ -938,15 +1062,15 @@ namespace Blueshot
                 // Back document (shadow)
                 using (var brush = new SolidBrush(Color.FromArgb(120, 120, 120)))
                 {
-                    g.FillRectangle(brush, 3, 3, 14, 16);
+                    g.FillRectangle(brush, 4, 4, 19, 21);
                 }
                 
                 // Front document
                 using (var brush = new System.Drawing.Drawing2D.LinearGradientBrush(
-                    new Point(0, 0), new Point(24, 24),
+                    new Point(0, 0), new Point(32, 32),
                     Color.FromArgb(33, 150, 243), Color.FromArgb(21, 101, 192)))
                 {
-                    g.FillRectangle(brush, 6, 5, 14, 16);
+                    g.FillRectangle(brush, 8, 7, 19, 21);
                 }
                 
                 // Document corner fold
@@ -1167,8 +1291,11 @@ namespace Blueshot
                     g.FillEllipse(brush, 2, 2, 20, 20);
                 }
                 
-                // Check if window is maximized to show appropriate icon
-                if (this.WindowState == FormWindowState.Maximized)
+                // Check if window is maximized (either via WindowState or custom bounds)
+                bool isMaximized = this.WindowState == FormWindowState.Maximized || 
+                                 this.Bounds.Equals(Screen.FromControl(this).WorkingArea);
+                
+                if (isMaximized)
                 {
                     // Restore icon - two overlapping squares
                     using (var pen = new Pen(Color.White, 1.5f))
@@ -1270,21 +1397,21 @@ namespace Blueshot
 
         private Bitmap CreateRectangleIcon()
         {
-            var icon = new Bitmap(24, 24);
+            var icon = new Bitmap(32, 32);
             using (var g = Graphics.FromImage(icon))
             {
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
                 
                 // Main rectangle
-                using (var pen = new Pen(Color.FromArgb(156, 39, 176), 2.5f))
+                using (var pen = new Pen(Color.FromArgb(156, 39, 176), 3f))
                 {
-                    g.DrawRectangle(pen, 4, 4, 16, 12);
+                    g.DrawRectangle(pen, 6, 6, 20, 16);
                 }
                 
                 // Inner shadow effect
                 using (var pen = new Pen(Color.FromArgb(50, 0, 0, 0), 1))
                 {
-                    g.DrawRectangle(pen, 5, 5, 14, 10);
+                    g.DrawRectangle(pen, 7, 7, 18, 14);
                 }
                 
                 // Corner highlights
@@ -1332,37 +1459,71 @@ namespace Blueshot
 
         private Bitmap CreateArrowIcon()
         {
-            var icon = new Bitmap(24, 24);
+            var icon = new Bitmap(32, 32);
             using (var g = Graphics.FromImage(icon))
             {
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
                 
-                // Arrow shaft
-                using (var pen = new Pen(Color.FromArgb(244, 67, 54), 3))
+                // Arrow shaft - diagonal from bottom-left to top-right
+                using (var pen = new Pen(Color.FromArgb(244, 67, 54), 5))
                 {
                     pen.StartCap = System.Drawing.Drawing2D.LineCap.Round;
-                    g.DrawLine(pen, 4, 20, 16, 8);
+                    g.DrawLine(pen, 6, 25, 24, 7);
                 }
                 
-                // Arrow head with better shape
+                // Large, clearly visible arrow head pointing up-right at 45 degrees
                 using (var brush = new SolidBrush(Color.FromArgb(244, 67, 54)))
                 {
                     var points = new Point[] {
-                        new Point(16, 8), new Point(22, 4), new Point(20, 8), new Point(22, 12)
+                        new Point(24, 7),   // tip of arrow (top-right)
+                        new Point(16, 7),   // horizontal wing (left from tip)
+                        new Point(20, 11),  // connection point (slightly down and left)
+                        new Point(24, 15),  // vertical wing (down from tip)
+                        new Point(28, 11),  // outer tip extension
+                        new Point(24, 7)    // back to tip
                     };
                     g.FillPolygon(brush, points);
                 }
                 
-                // Highlight for depth
-                using (var pen = new Pen(Color.FromArgb(100, 255, 255, 255), 1))
+                // Arrow head outline for extra definition
+                using (var pen = new Pen(Color.FromArgb(244, 67, 54), 3))
                 {
-                    g.DrawLine(pen, 5, 19, 15, 9);
+                    pen.LineJoin = System.Drawing.Drawing2D.LineJoin.Round;
+                    var points = new Point[] {
+                        new Point(24, 7),   // tip
+                        new Point(16, 7),   // horizontal wing
+                        new Point(20, 11),  // connection
+                        new Point(24, 15),  // vertical wing
+                        new Point(28, 11),  // outer extension
+                        new Point(24, 7)    // back to tip
+                    };
+                    g.DrawLines(pen, points);
                 }
                 
-                // Start point
+                // Add contrast shadow behind arrow head
+                using (var brush = new SolidBrush(Color.FromArgb(80, 0, 0, 0)))
+                {
+                    var shadowPoints = new Point[] {
+                        new Point(25, 8),   // tip shadow
+                        new Point(17, 8),   // horizontal wing shadow
+                        new Point(21, 12),  // connection shadow
+                        new Point(25, 16),  // vertical wing shadow
+                        new Point(29, 12),  // outer extension shadow
+                        new Point(25, 8)    // back to tip shadow
+                    };
+                    g.FillPolygon(brush, shadowPoints);
+                }
+                
+                // Starting point circle
                 using (var brush = new SolidBrush(Color.FromArgb(244, 67, 54)))
                 {
-                    g.FillEllipse(brush, 2, 18, 4, 4);
+                    g.FillEllipse(brush, 3, 22, 7, 7);
+                }
+                
+                // White highlight on starting circle
+                using (var brush = new SolidBrush(Color.FromArgb(120, 255, 255, 255)))
+                {
+                    g.FillEllipse(brush, 4, 23, 3, 3);
                 }
             }
             return icon;
@@ -1370,32 +1531,26 @@ namespace Blueshot
 
         private Bitmap CreateTextIcon()
         {
-            var icon = new Bitmap(24, 24);
+            var icon = new Bitmap(32, 32);
             using (var g = Graphics.FromImage(icon))
             {
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
                 g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
                 
-                // Text cursor/insertion point
-                using (var pen = new Pen(Color.FromArgb(63, 81, 181), 2))
-                {
-                    g.DrawLine(pen, 8, 4, 8, 20);
-                    g.DrawLine(pen, 6, 4, 10, 4);
-                    g.DrawLine(pen, 6, 20, 10, 20);
-                }
-                
-                // Letter "A" 
+                // Letter "A" centered
                 using (var brush = new SolidBrush(Color.FromArgb(63, 81, 181)))
-                using (var font = new Font("Segoe UI", 10, FontStyle.Bold))
+                using (var font = new Font("Segoe UI", 18, FontStyle.Bold))
                 {
-                    g.DrawString("A", font, brush, 12, 6);
+                    var textSize = g.MeasureString("A", font);
+                    var x = (32 - textSize.Width) / 2;
+                    var y = (32 - textSize.Height) / 2 - 3; // Slightly higher to leave room for underline
+                    g.DrawString("A", font, brush, x, y);
                 }
                 
-                // Text lines
-                using (var pen = new Pen(Color.FromArgb(150, 63, 81, 181), 1))
+                // Underline
+                using (var pen = new Pen(Color.FromArgb(63, 81, 181), 3))
                 {
-                    g.DrawLine(pen, 4, 16, 20, 16);
-                    g.DrawLine(pen, 4, 18, 16, 18);
+                    g.DrawLine(pen, 8, 25, 24, 25);
                 }
             }
             return icon;
@@ -1609,16 +1764,16 @@ namespace Blueshot
 
         private void UpdateThumbnailPanel()
         {
-            if (thumbnailPanel == null) return;
+            if (thumbnailPanelRounded == null) return;
             
             // Clear existing thumbnails except navigation panel
-            var controlsToRemove = thumbnailPanel.Controls.Cast<Control>()
-                .Where(c => c is PictureBox || (c is Panel && c.Controls.Count == 0))
+            var controlsToRemove = thumbnailPanelRounded.Controls.Cast<Control>()
+                .Where(c => c is RoundedPictureBox || (c is Panel && c.Controls.Count == 0))
                 .ToList();
             
             foreach (var control in controlsToRemove)
             {
-                thumbnailPanel.Controls.Remove(control);
+                thumbnailPanelRounded.Controls.Remove(control);
                 control.Dispose();
             }
 
@@ -1630,20 +1785,22 @@ namespace Blueshot
             {
                 var thumbBox = CreateThumbnailBox(screenshots[i], i);
                 thumbBox.Location = new Point(x, y);
-                thumbnailPanel.Controls.Add(thumbBox);
+                thumbnailPanelRounded.Controls.Add(thumbBox);
                 x += thumbBox.Width + 10;
             }
         }
 
-        private PictureBox CreateThumbnailBox(ScreenshotItem screenshotItem, int index)
+        private RoundedPictureBox CreateThumbnailBox(ScreenshotItem screenshotItem, int index)
         {
-            var thumbBox = new PictureBox
+            var thumbBox = new RoundedPictureBox
             {
                 Image = screenshotItem.Thumbnail,
                 Size = new Size(screenshotItem.Thumbnail.Width + 4, screenshotItem.Thumbnail.Height + 4),
                 SizeMode = PictureBoxSizeMode.CenterImage,
-                BorderStyle = index == currentScreenshotIndex ? BorderStyle.Fixed3D : BorderStyle.FixedSingle,
-                BackColor = index == currentScreenshotIndex ? Color.FromArgb(0, 120, 215) : Color.White,
+                BorderColor = index == currentScreenshotIndex ? Color.FromArgb(0, 122, 204) : Color.FromArgb(200, 200, 200),
+                BorderWidth = index == currentScreenshotIndex ? 2 : 1,
+                BackColor = index == currentScreenshotIndex ? Color.FromArgb(0, 122, 204) : Color.White,
+                CornerRadius = 4, // Rounded corners for thumbnails
                 Cursor = Cursors.Hand,
                 Tag = index
             };
@@ -1684,8 +1841,45 @@ namespace Blueshot
         {
             if (previousButton != null && nextButton != null)
             {
-                previousButton.Enabled = currentScreenshotIndex > 0;
-                nextButton.Enabled = currentScreenshotIndex < screenshots.Count - 1;
+                // Previous button styling
+                if (currentScreenshotIndex > 0)
+                {
+                    // Active state - VS Code blue
+                    previousButton.Enabled = true;
+                    previousButton.BackColor = Color.FromArgb(0, 122, 204);
+                    previousButton.ForeColor = Color.White;
+                    previousButton.FlatAppearance.BorderColor = Color.FromArgb(0, 122, 204);
+                    previousButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(28, 151, 234);
+                }
+                else
+                {
+                    // Disabled state - VS Code blue with reduced opacity (muted blue)
+                    previousButton.Enabled = false;
+                    previousButton.BackColor = Color.FromArgb(0, 80, 134); // Darker blue for disabled state
+                    previousButton.ForeColor = Color.FromArgb(200, 200, 200); // Slightly muted white
+                    previousButton.FlatAppearance.BorderColor = Color.FromArgb(0, 80, 134);
+                    previousButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(0, 80, 134);
+                }
+                
+                // Next button styling
+                if (currentScreenshotIndex < screenshots.Count - 1)
+                {
+                    // Active state - VS Code blue
+                    nextButton.Enabled = true;
+                    nextButton.BackColor = Color.FromArgb(0, 122, 204);
+                    nextButton.ForeColor = Color.White;
+                    nextButton.FlatAppearance.BorderColor = Color.FromArgb(0, 122, 204);
+                    nextButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(28, 151, 234);
+                }
+                else
+                {
+                    // Disabled state - VS Code blue with reduced opacity (muted blue)
+                    nextButton.Enabled = false;
+                    nextButton.BackColor = Color.FromArgb(0, 80, 134); // Darker blue for disabled state
+                    nextButton.ForeColor = Color.FromArgb(200, 200, 200); // Slightly muted white
+                    nextButton.FlatAppearance.BorderColor = Color.FromArgb(0, 80, 134);
+                    nextButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(0, 80, 134);
+                }
             }
         }
 
@@ -1699,14 +1893,15 @@ namespace Blueshot
 
         private void UpdateThumbnailSelection()
         {
-            if (thumbnailPanel != null)
+            if (thumbnailPanelRounded != null)
             {
-                foreach (Control control in thumbnailPanel.Controls)
+                foreach (Control control in thumbnailPanelRounded.Controls)
                 {
-                    if (control is PictureBox thumbBox && thumbBox.Tag is int index)
+                    if (control is RoundedPictureBox thumbBox && thumbBox.Tag is int index)
                     {
-                        thumbBox.BorderStyle = index == currentScreenshotIndex ? BorderStyle.Fixed3D : BorderStyle.FixedSingle;
-                        thumbBox.BackColor = index == currentScreenshotIndex ? Color.FromArgb(0, 120, 215) : Color.White;
+                        thumbBox.BorderColor = index == currentScreenshotIndex ? Color.FromArgb(0, 122, 204) : Color.FromArgb(200, 200, 200);
+                        thumbBox.BorderWidth = index == currentScreenshotIndex ? 2 : 1;
+                        thumbBox.BackColor = index == currentScreenshotIndex ? Color.FromArgb(0, 122, 204) : Color.White;
                     }
                 }
             }
@@ -1812,26 +2007,62 @@ namespace Blueshot
             };
         }
 
-        private void ShowColorPicker(object sender, EventArgs e)
+        private void ShowFillColorPicker(object sender, EventArgs e)
         {
             var colorDialog = new ColorDialog
             {
-                Color = annotationColor,
+                Color = Color.FromArgb(255, annotationFillColor.R, annotationFillColor.G, annotationFillColor.B), // Remove alpha for dialog
                 AllowFullOpen = true,
                 FullOpen = true
             };
             
             if (colorDialog.ShowDialog() == DialogResult.OK)
             {
-                annotationColor = colorDialog.Color;
-                
-                // Update color button appearance in the horizontal toolbar
-                var colorButton = toolStrip.Items["ColorButton"] as ToolStripButton;
-                if (colorButton != null)
+                // Preserve some transparency for fill colors (except for certain tools)
+                if (currentTool == AnnotationTool.Highlight)
                 {
-                    colorButton.ForeColor = annotationColor;
+                    annotationFillColor = Color.FromArgb(100, colorDialog.Color); // Semi-transparent for highlights
+                }
+                else
+                {
+                    annotationFillColor = Color.FromArgb(200, colorDialog.Color); // Slightly transparent for other fills
+                }
+                
+                // Update fill color button appearance
+                var fillColorButton = toolStrip.Items["FillColorButton"] as ToolStripButton;
+                if (fillColorButton != null)
+                {
+                    fillColorButton.ForeColor = Color.FromArgb(255, annotationFillColor.R, annotationFillColor.G, annotationFillColor.B);
                 }
             }
+        }
+
+        private void ShowLineColorPicker(object sender, EventArgs e)
+        {
+            var colorDialog = new ColorDialog
+            {
+                Color = annotationLineColor,
+                AllowFullOpen = true,
+                FullOpen = true
+            };
+            
+            if (colorDialog.ShowDialog() == DialogResult.OK)
+            {
+                annotationLineColor = colorDialog.Color; // Line colors are always solid
+                
+                // Update line color button appearance
+                var lineColorButton = toolStrip.Items["LineColorButton"] as ToolStripButton;
+                if (lineColorButton != null)
+                {
+                    lineColorButton.ForeColor = annotationLineColor;
+                }
+            }
+        }
+
+        // Legacy method for backward compatibility
+        private void ShowColorPicker(object sender, EventArgs e)
+        {
+            ShowLineColorPicker(sender, e); // Default to line color picker
         }
 
         private void ClearAnnotations()
@@ -1908,39 +2139,58 @@ namespace Blueshot
 
             // Use slightly thicker line if selected (for visual feedback)
             var thickness = annotation.IsSelected ? annotation.Thickness + 1 : annotation.Thickness;
-            var color = annotation.IsSelected ? Color.FromArgb(Math.Min(255, annotation.Color.R + 50), 
-                Math.Min(255, annotation.Color.G + 50), Math.Min(255, annotation.Color.B + 50)) : annotation.Color;
+            var lineColor = annotation.IsSelected ? Color.FromArgb(Math.Min(255, annotation.LineColor.R + 50), 
+                Math.Min(255, annotation.LineColor.G + 50), Math.Min(255, annotation.LineColor.B + 50)) : annotation.LineColor;
+            var fillColor = annotation.IsSelected ? Color.FromArgb(Math.Min(255, annotation.FillColor.R + 50), 
+                Math.Min(255, annotation.FillColor.G + 50), Math.Min(255, annotation.FillColor.B + 50)) : annotation.FillColor;
 
             switch (annotation.Tool)
             {
                 case AnnotationTool.Highlight:
-                    using (var brush = new SolidBrush(Color.FromArgb(100, color)))
+                    using (var brush = new SolidBrush(fillColor))
                     {
                         g.FillRectangle(brush, rect);
                     }
                     break;
 
                 case AnnotationTool.Rectangle:
-                    using (var pen = new Pen(color, thickness))
+                    // Fill the rectangle if it has a fill color with alpha > 0
+                    if (fillColor.A > 0)
+                    {
+                        using (var brush = new SolidBrush(fillColor))
+                        {
+                            g.FillRectangle(brush, rect);
+                        }
+                    }
+                    // Draw the border
+                    using (var pen = new Pen(lineColor, thickness))
                     {
                         g.DrawRectangle(pen, rect);
                     }
                     break;
 
                 case AnnotationTool.Line:
-                    using (var pen = new Pen(color, thickness))
+                    using (var pen = new Pen(lineColor, thickness))
                     {
                         g.DrawLine(pen, annotation.StartPoint, annotation.EndPoint);
                     }
                     break;
 
                 case AnnotationTool.Arrow:
-                    DrawArrow(g, annotation.StartPoint, annotation.EndPoint, color, thickness);
+                    DrawArrow(g, annotation.StartPoint, annotation.EndPoint, lineColor, thickness);
                     break;
 
                 case AnnotationTool.Text:
-                    using (var brush = new SolidBrush(color))
+                    using (var brush = new SolidBrush(lineColor)) // Use line color for text
                     {
+                        string textToDisplay = annotation.Text ?? "Text";
+                        
+                        // If this is the annotation being edited, show current typing text and cursor
+                        if (isTypingText && annotation == editingTextAnnotation)
+                        {
+                            textToDisplay = currentTypingText;
+                        }
+                        
                         if (annotation.IsTextRegion)
                         {
                             // For region-based text, draw text within the bounds
@@ -1951,21 +2201,24 @@ namespace Blueshot
                                 Math.Abs(annotation.EndPoint.Y - annotation.StartPoint.Y)
                             );
                             
-                            // Draw background rectangle with slight transparency
-                            using (var bgBrush = new SolidBrush(Color.FromArgb(240, Color.White)))
+                            // Draw background rectangle with fill color
+                            if (fillColor.A > 0)
                             {
-                                g.FillRectangle(bgBrush, textRect);
+                                using (var bgBrush = new SolidBrush(fillColor))
+                                {
+                                    g.FillRectangle(bgBrush, textRect);
+                                }
                             }
                             
                             // Draw border
-                            using (var pen = new Pen(color, 1))
+                            using (var pen = new Pen(lineColor, 1))
                             {
                                 pen.DashStyle = System.Drawing.Drawing2D.DashStyle.Dot;
                                 g.DrawRectangle(pen, textRect);
                             }
                             
                             // Draw text within the rectangle with word wrapping
-                            if (!string.IsNullOrEmpty(annotation.Text))
+                            if (!string.IsNullOrEmpty(textToDisplay))
                             {
                                 var stringFormat = new StringFormat
                                 {
@@ -1977,20 +2230,105 @@ namespace Blueshot
                                 // Add some padding
                                 textRect.Inflate(-5, -5);
                                 
-                                g.DrawString(annotation.Text, annotation.Font, brush, textRect, stringFormat);
+                                g.DrawString(textToDisplay, annotation.Font, brush, textRect, stringFormat);
+                            }
+                            
+                            // Draw cursor if editing
+                            if (isTypingText && annotation == editingTextAnnotation)
+                            {
+                                DrawTextCursor(g, annotation, textToDisplay, lineColor);
                             }
                         }
                         else
                         {
                             // For point-based text, draw at the start point
-                            g.DrawString(annotation.Text ?? "Text", annotation.Font, brush, annotation.StartPoint);
+                            g.DrawString(textToDisplay, annotation.Font, brush, annotation.StartPoint);
+                            
+                            // Draw cursor if editing
+                            if (isTypingText && annotation == editingTextAnnotation)
+                            {
+                                DrawTextCursor(g, annotation, textToDisplay, lineColor);
+                            }
                         }
                     }
                     break;
 
                 case AnnotationTool.Counter:
-                    DrawCounter(g, annotation.StartPoint, annotation.CounterNumber, color, thickness);
+                    DrawCounter(g, annotation.StartPoint, annotation.CounterNumber, lineColor, thickness);
                     break;
+            }
+        }
+
+        private void DrawTextCursor(Graphics g, AnnotationObject annotation, string currentText, Color color)
+        {
+            if (annotation == null || !isTypingText) return;
+            
+            try
+            {
+                // Get text up to cursor position
+                string textToCursor = textCursorPosition <= currentText.Length ? 
+                    currentText.Substring(0, textCursorPosition) : currentText;
+                
+                PointF cursorPosition;
+                
+                if (annotation.IsTextRegion)
+                {
+                    // For region-based text
+                    var textRect = new Rectangle(
+                        Math.Min(annotation.StartPoint.X, annotation.EndPoint.X),
+                        Math.Min(annotation.StartPoint.Y, annotation.EndPoint.Y),
+                        Math.Abs(annotation.EndPoint.X - annotation.StartPoint.X),
+                        Math.Abs(annotation.EndPoint.Y - annotation.StartPoint.Y)
+                    );
+                    
+                    textRect.Inflate(-5, -5);
+                    
+                    if (!string.IsNullOrEmpty(textToCursor))
+                    {
+                        var stringFormat = new StringFormat
+                        {
+                            Alignment = StringAlignment.Near,
+                            LineAlignment = StringAlignment.Near,
+                            FormatFlags = StringFormatFlags.LineLimit
+                        };
+                        
+                        var textSize = g.MeasureString(textToCursor, annotation.Font, textRect.Width, stringFormat);
+                        cursorPosition = new PointF(textRect.X + textSize.Width, textRect.Y);
+                    }
+                    else
+                    {
+                        cursorPosition = new PointF(textRect.X, textRect.Y);
+                    }
+                }
+                else
+                {
+                    // For point-based text
+                    if (!string.IsNullOrEmpty(textToCursor))
+                    {
+                        var textSize = g.MeasureString(textToCursor, annotation.Font);
+                        cursorPosition = new PointF(
+                            annotation.StartPoint.X + textSize.Width,
+                            annotation.StartPoint.Y
+                        );
+                    }
+                    else
+                    {
+                        cursorPosition = new PointF(annotation.StartPoint.X, annotation.StartPoint.Y);
+                    }
+                }
+                
+                // Draw blinking cursor (vertical line)
+                using (var pen = new Pen(color, 1))
+                {
+                    var cursorHeight = annotation.Font.Height;
+                    g.DrawLine(pen, 
+                        cursorPosition.X, cursorPosition.Y,
+                        cursorPosition.X, cursorPosition.Y + cursorHeight);
+                }
+            }
+            catch (Exception)
+            {
+                // Fail silently for cursor drawing errors
             }
         }
 
@@ -2068,8 +2406,8 @@ namespace Blueshot
                         // Hide any existing text editor first
                         HideInlineTextEditor();
                         
-                        // Show inline editor for this text annotation
-                        ShowInlineTextEditor(annotation);
+                        // Start direct text input for this text annotation
+                        StartDirectTextInput(annotation);
                         return;
                     }
                 }
@@ -2187,6 +2525,13 @@ namespace Blueshot
 
         private void HandleSelectMouseDown(Point imagePoint)
         {
+            // If we're currently editing text, finish that first
+            if (isTypingText && editingTextAnnotation != null)
+            {
+                FinishDirectTextEditing();
+                return;
+            }
+
             // Clear previous selection
             if (selectedAnnotation != null)
             {
@@ -2562,7 +2907,8 @@ namespace Blueshot
                     Tool = currentTool,
                     StartPoint = imagePoint,
                     EndPoint = imagePoint, // Not used for counter
-                    Color = annotationColor,
+                    FillColor = annotationFillColor,
+                    LineColor = annotationLineColor,
                     Thickness = annotationThickness,
                     CounterNumber = counterNumber
                 };
@@ -2596,7 +2942,8 @@ namespace Blueshot
                     Tool = currentTool,
                     StartPoint = startPoint,
                     EndPoint = endPoint,
-                    Color = annotationColor,
+                    FillColor = annotationFillColor,
+                    LineColor = annotationLineColor,
                     Thickness = annotationThickness
                 };
 
@@ -2615,7 +2962,8 @@ namespace Blueshot
                     Tool = AnnotationTool.Text,
                     StartPoint = imagePoint,
                     EndPoint = imagePoint,
-                    Color = annotationColor,
+                    FillColor = Color.FromArgb(255, 255, 255, 255), // White background for text
+                    LineColor = annotationLineColor, // Use line color for text
                     Thickness = annotationThickness,
                     Text = "",
                     Font = new Font("Segoe UI", 12 + annotationThickness * 2, FontStyle.Regular)
@@ -2623,7 +2971,133 @@ namespace Blueshot
                 annotations.Add(editingTextAnnotation);
             }
 
-            ShowInlineTextEditor(editingTextAnnotation);
+            StartDirectTextInput(editingTextAnnotation);
+        }
+
+        private void StartDirectTextInput(AnnotationObject textAnnotation)
+        {
+            editingTextAnnotation = textAnnotation;
+            isTypingText = true;
+            currentTypingText = textAnnotation.Text ?? "";
+            textCursorPosition = currentTypingText.Length;
+
+            // Ensure the form can receive key events
+            this.Focus();
+            
+            RedrawImage();
+        }
+
+        private void HandleDirectTextInput(KeyEventArgs e)
+        {
+            if (editingTextAnnotation == null) return;
+
+            bool textChanged = false;
+
+            switch (e.KeyCode)
+            {
+                case Keys.Escape:
+                    // Cancel text editing
+                    FinishDirectTextEditing();
+                    e.Handled = true;
+                    break;
+
+                case Keys.Enter:
+                    // Finish text editing
+                    FinishDirectTextEditing();
+                    e.Handled = true;
+                    break;
+
+                case Keys.Back:
+                    // Handle backspace
+                    if (textCursorPosition > 0 && currentTypingText.Length > 0)
+                    {
+                        currentTypingText = currentTypingText.Remove(textCursorPosition - 1, 1);
+                        textCursorPosition--;
+                        textChanged = true;
+                    }
+                    e.Handled = true;
+                    break;
+
+                case Keys.Delete:
+                    // Handle delete
+                    if (textCursorPosition < currentTypingText.Length)
+                    {
+                        currentTypingText = currentTypingText.Remove(textCursorPosition, 1);
+                        textChanged = true;
+                    }
+                    e.Handled = true;
+                    break;
+
+                case Keys.Left:
+                    // Move cursor left
+                    if (textCursorPosition > 0)
+                    {
+                        textCursorPosition--;
+                    }
+                    e.Handled = true;
+                    break;
+
+                case Keys.Right:
+                    // Move cursor right
+                    if (textCursorPosition < currentTypingText.Length)
+                    {
+                        textCursorPosition++;
+                    }
+                    e.Handled = true;
+                    break;
+
+                case Keys.Home:
+                    // Move to beginning
+                    textCursorPosition = 0;
+                    e.Handled = true;
+                    break;
+
+                case Keys.End:
+                    // Move to end
+                    textCursorPosition = currentTypingText.Length;
+                    e.Handled = true;
+                    break;
+            }
+
+            if (textChanged)
+            {
+                editingTextAnnotation.Text = currentTypingText;
+                RedrawImage();
+            }
+        }
+
+        private void OnKeyPress(object sender, KeyPressEventArgs e)
+        {
+            if (isTypingText && editingTextAnnotation != null)
+            {
+                // Handle character input
+                if (!char.IsControl(e.KeyChar))
+                {
+                    currentTypingText = currentTypingText.Insert(textCursorPosition, e.KeyChar.ToString());
+                    textCursorPosition++;
+                    editingTextAnnotation.Text = currentTypingText;
+                    RedrawImage();
+                    e.Handled = true;
+                }
+            }
+        }
+
+        private void FinishDirectTextEditing()
+        {
+            if (editingTextAnnotation != null)
+            {
+                // If text is empty, remove the annotation
+                if (string.IsNullOrWhiteSpace(currentTypingText))
+                {
+                    annotations.Remove(editingTextAnnotation);
+                }
+
+                isTypingText = false;
+                editingTextAnnotation = null;
+                currentTypingText = "";
+                textCursorPosition = 0;
+                RedrawImage();
+            }
         }
 
         private void ShowInlineTextEditor(AnnotationObject textAnnotation)
@@ -2862,8 +3336,14 @@ namespace Blueshot
                 Location = new Point(195, 50),
                 Size = new Size(75, 23),
                 DialogResult = DialogResult.OK,
-                CornerRadius = 5
+                CornerRadius = 3, // Match VS Code angular style
+                BackColor = Color.FromArgb(0, 122, 204), // VS Code blue
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat
             };
+            okButton.FlatAppearance.BorderSize = 1;
+            okButton.FlatAppearance.BorderColor = Color.FromArgb(0, 122, 204);
+            okButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(28, 151, 234);
 
             var cancelButton = new RoundedButton
             {
@@ -2871,8 +3351,14 @@ namespace Blueshot
                 Location = new Point(115, 50),
                 Size = new Size(75, 23),
                 DialogResult = DialogResult.Cancel,
-                CornerRadius = 5
+                CornerRadius = 3, // Match VS Code angular style
+                BackColor = Color.FromArgb(0, 122, 204), // VS Code blue
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat
             };
+            cancelButton.FlatAppearance.BorderSize = 1;
+            cancelButton.FlatAppearance.BorderColor = Color.FromArgb(0, 122, 204);
+            cancelButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(28, 151, 234);
 
             inputForm.Controls.AddRange(new Control[] { textBox, okButton, cancelButton });
             inputForm.AcceptButton = okButton;
@@ -2888,7 +3374,8 @@ namespace Blueshot
                     Tool = AnnotationTool.Text,
                     StartPoint = position,
                     EndPoint = position, // Not used for text
-                    Color = annotationColor,
+                    FillColor = Color.FromArgb(255, 255, 255, 255), // White background for text
+                    LineColor = annotationLineColor, // Use line color for text
                     Thickness = annotationThickness,
                     Text = textBox.Text,
                     Font = new Font("Segoe UI", 12 + annotationThickness * 2, FontStyle.Regular)
@@ -2917,7 +3404,8 @@ namespace Blueshot
                 Tool = AnnotationTool.Text,
                 StartPoint = new Point(left, top),
                 EndPoint = new Point(right, bottom),
-                Color = annotationColor,
+                FillColor = Color.FromArgb(240, 255, 255, 255), // Semi-transparent white background for region text
+                LineColor = annotationLineColor, // Use line color for text
                 Thickness = annotationThickness,
                 Text = "",
                 Font = new Font("Segoe UI", 12 + annotationThickness * 2, FontStyle.Regular),
@@ -2925,7 +3413,7 @@ namespace Blueshot
             };
             
             annotations.Add(editingTextAnnotation);
-            ShowRegionalTextEditor(editingTextAnnotation, regionRect);
+            StartDirectTextInput(editingTextAnnotation);
         }
 
         private void ShowRegionalTextEditor(AnnotationObject textAnnotation, Rectangle imageRect)
@@ -3127,7 +3615,7 @@ namespace Blueshot
                             Math.Abs(displayCurrent.X - displayStart.X),
                             Math.Abs(displayCurrent.Y - displayStart.Y)
                         );
-                        using (var brush = new SolidBrush(Color.FromArgb(100, annotationColor)))
+                        using (var brush = new SolidBrush(annotationFillColor))
                         {
                             g.FillRectangle(brush, rect);
                         }
@@ -3140,21 +3628,21 @@ namespace Blueshot
                             Math.Abs(displayCurrent.X - displayStart.X),
                             Math.Abs(displayCurrent.Y - displayStart.Y)
                         );
-                        using (var pen = new Pen(annotationColor, displayThickness))
+                        using (var pen = new Pen(annotationLineColor, displayThickness))
                         {
                             g.DrawRectangle(pen, rectBounds);
                         }
                         break;
 
                     case AnnotationTool.Line:
-                        using (var pen = new Pen(annotationColor, displayThickness))
+                        using (var pen = new Pen(annotationLineColor, displayThickness))
                         {
                             g.DrawLine(pen, displayStart, displayCurrent);
                         }
                         break;
 
                     case AnnotationTool.Arrow:
-                        using (var pen = new Pen(annotationColor, displayThickness))
+                        using (var pen = new Pen(annotationLineColor, displayThickness))
                         {
                             g.DrawLine(pen, displayStart, displayCurrent);
 
@@ -3188,7 +3676,7 @@ namespace Blueshot
                         );
                         
                         // Draw dashed border to indicate text region
-                        using (var pen = new Pen(annotationColor, Math.Max(1, displayThickness)))
+                        using (var pen = new Pen(annotationLineColor, Math.Max(1, displayThickness)))
                         {
                             pen.DashStyle = System.Drawing.Drawing2D.DashStyle.Dash;
                             g.DrawRectangle(pen, textRect);
@@ -3197,7 +3685,7 @@ namespace Blueshot
                         // Draw "Text" label in the center
                         if (textRect.Width > 40 && textRect.Height > 20)
                         {
-                            using (var brush = new SolidBrush(annotationColor))
+                            using (var brush = new SolidBrush(annotationLineColor))
                             using (var font = new Font("Segoe UI", Math.Max(8, displayThickness + 8), FontStyle.Regular))
                             {
                                 var text = "Text";
@@ -3480,27 +3968,35 @@ namespace Blueshot
 
         private void ToggleFullscreen()
         {
-            if (this.WindowState == FormWindowState.Maximized)
+            if (IsEffectivelyMaximized())
             {
                 this.WindowState = FormWindowState.Normal;
                 this.FormBorderStyle = FormBorderStyle.Sizable;
+                this.Size = new Size(1000, 700);
+                this.CenterToScreen();
+                this.FormBorderStyle = FormBorderStyle.None;
             }
             else
             {
-                this.FormBorderStyle = FormBorderStyle.None;
-                this.WindowState = FormWindowState.Maximized;
+                MaximizeRespectingTaskbar();
             }
         }
 
         private void ToggleMaximize()
         {
-            if (this.WindowState == FormWindowState.Maximized)
+            if (IsEffectivelyMaximized())
             {
+                // Restore to normal size
                 this.WindowState = FormWindowState.Normal;
+                this.FormBorderStyle = FormBorderStyle.Sizable;
+                this.Size = new Size(1000, 700);
+                this.CenterToScreen();
+                this.FormBorderStyle = FormBorderStyle.None;
             }
             else
             {
-                this.WindowState = FormWindowState.Maximized;
+                // Maximize while respecting taskbar
+                MaximizeRespectingTaskbar();
             }
             
             // Update the maximize button icon to reflect the new state
@@ -3699,6 +4195,13 @@ namespace Blueshot
         // Event handlers
         private void OnKeyDown(object sender, KeyEventArgs e)
         {
+            // Handle direct text input when typing text
+            if (isTypingText && editingTextAnnotation != null)
+            {
+                HandleDirectTextInput(e);
+                return;
+            }
+
             // If text editor is active, let it handle most keys
             if (inlineTextBox != null && inlineTextBox.Focused)
             {
@@ -3901,6 +4404,9 @@ namespace Blueshot
 
         private void OnSizeChanged(object sender, EventArgs e)
         {
+            // Ensure taskbar icon remains visible during window state changes
+            this.ShowInTaskbar = true;
+            
             // Update maximize button icon when window state changes
             UpdateMaximizeButtonIcon();
         }
