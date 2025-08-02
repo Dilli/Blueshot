@@ -1,6 +1,6 @@
 @echo off
 echo ========================================
-echo Building Blueshot v0.1.0-beta Installer
+echo Building Blueshot v0.2.0-beta Installer
 echo ========================================
 echo.
 
@@ -49,20 +49,20 @@ echo ========================================
 echo Installer built successfully!
 echo ========================================
 echo.
-echo Output: installer\Blueshot-Setup-v0.1.0-beta.exe
+echo Output: installer\Blueshot-Setup-v0.2.0-beta.exe
 echo.
 
 REM Check if installer was created
-if exist "installer\Blueshot-Setup-v0.1.0-beta.exe" (
+if exist "installer\Blueshot-Setup-v0.2.0-beta.exe" (
     echo File size:
-    for %%I in ("installer\Blueshot-Setup-v0.1.0-beta.exe") do echo %%~zI bytes
+    for %%I in ("installer\Blueshot-Setup-v0.2.0-beta.exe") do echo %%~zI bytes
     echo.
     echo The installer is ready for distribution!
     echo.
     set /p run_installer="Do you want to test the installer now? (y/n): "
     if /i "%run_installer%"=="y" (
         echo Running installer...
-        "installer\Blueshot-Setup-v0.1.0-beta.exe"
+        "installer\Blueshot-Setup-v0.2.0-beta.exe"
     )
 ) else (
     echo ERROR: Installer file not found!

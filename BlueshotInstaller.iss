@@ -1,7 +1,7 @@
 [Setup]
 AppName=Blueshot - Professional Screen Capture Tool
-AppVersion=0.1.0
-AppVerName=Blueshot v0.1.0-beta
+AppVersion=0.2.0
+AppVerName=Blueshot v0.2.0-beta
 AppPublisher=Dilli
 AppPublisherURL=https://github.com/Dilli/Blueshot
 AppSupportURL=https://github.com/Dilli/Blueshot/issues
@@ -11,9 +11,9 @@ DefaultDirName={autopf}\Blueshot
 DefaultGroupName=Blueshot
 AllowNoIcons=yes
 LicenseFile=LICENSE
-InfoAfterFile=RELEASE_NOTES_v0.1.0-beta.md
+InfoAfterFile=RELEASE_NOTES_v0.2.0-beta.md
 OutputDir=installer
-OutputBaseFilename=Blueshot-Setup-v0.1.0-beta
+OutputBaseFilename=Blueshot-Setup-v0.2.0-beta
 SetupIconFile=icon.ico
 UninstallDisplayIcon={app}\Blueshot.exe
 Compression=lzma2/ultra64
@@ -29,13 +29,13 @@ DisableReadyPage=no
 DisableFinishedPage=no
 ShowLanguageDialog=no
 AppId={{B8E5A8F2-4C6D-4A5B-9E8F-1D2C3E4F5A6B}
-VersionInfoVersion=0.1.0.0
+VersionInfoVersion=0.2.0.0
 VersionInfoCompany=Dilli
 VersionInfoDescription=Blueshot Professional Screen Capture Tool Installer - Beta
 VersionInfoCopyright=Copyright (C) 2025 Dilli
 VersionInfoProductName=Blueshot
-VersionInfoProductVersion=0.1.0.0
-VersionInfoOriginalFileName=Blueshot-Setup-v0.1.0-beta.exe
+VersionInfoProductVersion=0.2.0.0
+VersionInfoOriginalFileName=Blueshot-Setup-v0.2.0-beta.exe
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -50,7 +50,7 @@ Name: "associatefiles"; Description: "Associate common image file types with Blu
 Source: "bin\Release\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion; DestName: "README.txt"
-Source: "RELEASE_NOTES_v0.1.0-beta.md"; DestDir: "{app}"; Flags: ignoreversion; DestName: "RELEASE_NOTES.txt"
+Source: "RELEASE_NOTES_v0.2.0-beta.md"; DestDir: "{app}"; Flags: ignoreversion; DestName: "RELEASE_NOTES.txt"
 Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion; DestName: "LICENSE.txt"
 Source: "icons\*"; DestDir: "{app}\icons"; Flags: ignoreversion recursesubdirs createallsubdirs; MinVersion: 0,6.1
 
@@ -83,10 +83,10 @@ Type: filesandordirs; Name: "{app}"
 Type: dirifempty; Name: "{app}"
 
 [Messages]
-WelcomeLabel2=This will install [name/ver] on your computer.%n%nBlueshot is a professional screenshot tool with advanced annotation capabilities, modern UI design, and powerful features.%n%nFeatures in this beta release:%n• RoundedButton UI with modern 5px radius styling%n• Borderless preview with traffic light controls%n• Enhanced carousel navigation%n• Region-based text annotation system%n• Comprehensive logging and error handling%n• Self-contained deployment%n%nIt is recommended that you close all other applications before continuing.
-FinishedHeadingLabel=Completing the Blueshot v0.1.0-beta Setup Wizard
-FinishedLabelNoIcons=Setup has finished installing Blueshot v0.1.0-beta on your computer. The application may be launched by selecting the installed icons.
-FinishedLabel=Setup has finished installing Blueshot v0.1.0-beta on your computer. The application may be launched by selecting the installed icons.
+WelcomeLabel2=This will install [name/ver] on your computer.%n%nBlueshot is a professional screenshot tool with advanced annotation capabilities, modern UI design, and powerful features.%n%nFeatures in this v0.2.0-beta release:%n• FIXED: Taskbar icon now displays properly when minimized%n• VS Code-style rounded UI with 6-8px corner radius%n• Dual color system: separate fill and line color controls%n• Enhanced RoundedToolStripRenderer for consistent styling%n• Improved icon loading with robust fallback support%n• Enhanced carousel navigation with professional design%n• Region-based text annotation system%n• Comprehensive logging and error handling%n• Self-contained deployment%n%nIt is recommended that you close all other applications before continuing.
+FinishedHeadingLabel=Completing the Blueshot v0.2.0-beta Setup Wizard
+FinishedLabelNoIcons=Setup has finished installing Blueshot v0.2.0-beta on your computer. The application may be launched by selecting the installed icons.
+FinishedLabel=Setup has finished installing Blueshot v0.2.0-beta on your computer. The application may be launched by selecting the installed icons.
 
 [Code]
 var
@@ -159,12 +159,14 @@ begin
     wpWelcome:
       begin
         WizardForm.WelcomeLabel2.Caption := 
-          'This will install Blueshot v0.1.0-beta on your computer.' + #13#10 + #13#10 +
+          'This will install Blueshot v0.2.0-beta on your computer.' + #13#10 + #13#10 +
           'Blueshot is a professional screenshot tool featuring:' + #13#10 +
-          '• Modern UI with rounded buttons and borderless design' + #13#10 +
-          '• Enhanced carousel navigation with larger controls' + #13#10 +
+          '• FIXED: Taskbar icon now displays when minimized' + #13#10 +
+          '• VS Code-style rounded UI with 6-8px corner radius' + #13#10 +
+          '• Dual color system: separate fill and line controls' + #13#10 +
+          '• Enhanced carousel navigation with professional design' + #13#10 +
           '• Advanced text annotation (point and region-based)' + #13#10 +
-          '• Traffic light window controls (minimize/maximize/close)' + #13#10 +
+          '• RoundedToolStripRenderer for consistent styling' + #13#10 +
           '• Comprehensive logging and error handling' + #13#10 +
           '• Global hotkey support with Print Screen integration' + #13#10 +
           '• Self-contained deployment (no .NET runtime required)' + #13#10 + #13#10 +
@@ -174,16 +176,17 @@ begin
     wpFinished:
       begin
         WizardForm.FinishedLabel.Caption := 
-          'Setup has finished installing Blueshot v0.1.0-beta on your computer.' + #13#10 + #13#10 +
-          'The application features a modern UI with rounded buttons and enhanced navigation.' + #13#10 + #13#10 +
+          'Setup has finished installing Blueshot v0.2.0-beta on your computer.' + #13#10 + #13#10 +
+          'NEW in v0.2.0-beta: Fixed taskbar icon display and VS Code-style UI!' + #13#10 + #13#10 +
           'To take screenshots:' + #13#10 +
           '• Press Print Screen (or Ctrl+Shift+F12 if unavailable)' + #13#10 +
           '• Right-click the system tray icon for quick access' + #13#10 +
           '• Use the desktop shortcut if created' + #13#10 + #13#10 +
-          'New in this version:' + #13#10 +
-          '• Enhanced carousel with 200px height and larger buttons' + #13#10 +
-          '• Region-based text annotation system' + #13#10 +
-          '• Borderless preview window design' + #13#10 + #13#10 +
+          'Key improvements in this version:' + #13#10 +
+          '• Taskbar icon now displays properly when minimized' + #13#10 +
+          '• VS Code-style rounded UI throughout the interface' + #13#10 +
+          '• Dual color system: separate fill and line color controls' + #13#10 +
+          '• Enhanced professional styling and error handling' + #13#10 + #13#10 +
           'Thank you for testing this beta release!';
       end;
   end;

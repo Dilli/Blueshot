@@ -7,8 +7,8 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyTitle>Blueshot - Screen Capture Tool</AssemblyTitle>
     <AssemblyDescription>A modern screen capture application inspired by Greenshot with global hotkey support</AssemblyDescription>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
+    <AssemblyVersion>0.2.0.0</AssemblyVersion>
+    <FileVersion>0.2.0.0</FileVersion>
     <Copyright>Copyright © 2025</Copyright>
     <ApplicationIcon>icon.ico</ApplicationIcon>
     <Win32Resource />
