@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 namespace Blueshot
 {
@@ -21,6 +22,12 @@ namespace Blueshot
         private ToolStripStatusLabel zoomLabel;
         private Panel imagePanel;
         private Panel mainContainer; // Container with scroll bars
+        private Panel fileExplorerPanel; // File explorer panel
+        private TreeView fileExplorerTreeView; // File explorer tree view
+        private ContextMenuStrip fileExplorerContextMenu; // Context menu for file explorer
+        private ContextMenuStrip homeButtonContextMenu; // Context menu for home button
+        private string customHomePath = ""; // Custom home path
+        private bool isFileExplorerVisible = true; // Always visible
         private Bitmap screenshot;
         private Bitmap workingImage;
         private float zoomFactor = 1.0f;
@@ -434,6 +441,18 @@ namespace Blueshot
             // Create annotation toolbar
             CreateAnnotationToolStrip();
 
+            // Create file explorer panel
+            CreateFileExplorerPanel();
+
+            // Create file explorer context menu
+            CreateFileExplorerContextMenu();
+
+            // Create home button context menu
+            CreateHomeButtonContextMenu();
+
+            // Load settings (custom home path)
+            LoadSettings();
+
             // Create main image panel with scrolling
             CreateImagePanel();
 
@@ -442,9 +461,13 @@ namespace Blueshot
 
             // Set up layout (without menu strip)
             this.Controls.Add(imagePanel);
-            this.Controls.Add(annotationToolStrip);
+            this.Controls.Add(CreateFileExplorerSplitter());
+            this.Controls.Add(fileExplorerPanel);
             this.Controls.Add(toolStrip);
             this.Controls.Add(statusStrip);
+
+            // Initialize file explorer to home folder
+            InitializeFileExplorerToHome();
 
             // Event handlers
             this.KeyDown += OnKeyDown;
@@ -535,7 +558,6 @@ namespace Blueshot
             // File menu
             var fileMenu = new ToolStripMenuItem("&File");
             fileMenu.DropDownItems.Add("&Save", Properties.Resources.Save ?? null, (s, e) => QuickSave());
-            fileMenu.DropDownItems.Add("Save &As...", Properties.Resources.SaveAs ?? null, (s, e) => SaveAs());
             fileMenu.DropDownItems.Add(new ToolStripSeparator());
             fileMenu.DropDownItems.Add("&Copy to Clipboard", Properties.Resources.Copy ?? null, (s, e) => CopyToClipboard());
             fileMenu.DropDownItems.Add(new ToolStripSeparator());
@@ -579,16 +601,21 @@ namespace Blueshot
                 Renderer = new RoundedToolStripRenderer(6, Color.FromArgb(245, 245, 245), Color.FromArgb(200, 200, 200))
             };
 
+            // File Explorer button (first button) - now shows home folder
+            var fileExplorerButton = new ToolStripButton("", CreateFileExplorerIcon(), (s, e) => GoToHomeFolder())
+            {
+                ToolTipText = "Go to Home Folder",
+                DisplayStyle = ToolStripItemDisplayStyle.Image,
+                Checked = true // Always visible
+            };
+
+            // Separator after file explorer
+            var separatorFileExplorer = new ToolStripSeparator();
+
             // Save buttons
             var saveButton = new ToolStripButton("", CreateSaveIcon(), (s, e) => QuickSave())
             {
-                ToolTipText = "Save to Desktop (Ctrl+S)",
-                DisplayStyle = ToolStripItemDisplayStyle.Image
-            };
-
-            var saveAsButton = new ToolStripButton("", CreateSaveIcon(), (s, e) => SaveAs())
-            {
-                ToolTipText = "Save As... (Ctrl+Shift+S)",
+                ToolTipText = "Save to Selected Folder (Ctrl+S)",
                 DisplayStyle = ToolStripItemDisplayStyle.Image
             };
 
@@ -713,11 +740,12 @@ namespace Blueshot
             };
 
             toolStrip.Items.AddRange(new ToolStripItem[] {
-                saveButton, saveAsButton, copyButton, separator1,
+                fileExplorerButton, separatorFileExplorer,
+                saveButton, copyButton, separator1,
                 zoomInButton, zoomOutButton, actualSizeButton, fitToWindowButton, separator2,
                 fillColorLabel, fillColorButton, lineColorLabel, lineColorButton, annotationThicknessLabel, annotationThicknessCombo, separator3,
                 counterLabel, counterButton, counterResetButton, separator4,
-                minimizeButton, maximizeButton, closeButton
+                closeButton, maximizeButton, minimizeButton
             });
         }
 
@@ -729,9 +757,9 @@ namespace Blueshot
                 GripStyle = ToolStripGripStyle.Hidden,
                 Font = new Font("Segoe UI", 9),
                 ImageScalingSize = new Size(32, 32),
-                Dock = DockStyle.Left,
-                LayoutStyle = ToolStripLayoutStyle.VerticalStackWithOverflow,
-                Width = 90,
+                Dock = DockStyle.Top,
+                LayoutStyle = ToolStripLayoutStyle.HorizontalStackWithOverflow,
+                Height = 50,
                 RenderMode = ToolStripRenderMode.ManagerRenderMode,
                 Renderer = new RoundedToolStripRenderer(6, Color.FromArgb(248, 248, 248), Color.FromArgb(200, 200, 200))
             };
@@ -840,18 +868,23 @@ namespace Blueshot
             imagePanel = new Panel
             {
                 Dock = DockStyle.Fill,
-                AutoScroll = true,
+                AutoScroll = false, // Disable on main panel, enable on content
                 BackColor = Color.FromArgb(230, 230, 230),
                 BorderStyle = BorderStyle.None,
-                Padding = new Padding(10)
+                Padding = new Padding(0) // Remove padding to align with file explorer
             };
+
+            // Add annotation toolbar at the top of the content area
+            annotationToolStrip.Dock = DockStyle.Top;
+            imagePanel.Controls.Add(annotationToolStrip);
 
             // Create main container for image and thumbnails
             mainContainer = new Panel
             {
                 Dock = DockStyle.Fill,
                 BackColor = Color.Transparent,
-                AutoScroll = true // Enable scrolling for large images
+                AutoScroll = true, // Enable scrolling for large images
+                Padding = new Padding(10)
             };
 
             // Create thumbnail panel at the bottom
@@ -987,6 +1020,1523 @@ namespace Blueshot
             };
 
             statusStrip.Items.AddRange(new ToolStripItem[] { statusLabel, sizeLabel, zoomLabel });
+        }
+
+        private void CreateFileExplorerPanel()
+        {
+            fileExplorerPanel = new Panel
+            {
+                Width = 375, // Increased from 250 by 50%
+                Dock = DockStyle.Left,
+                BackColor = Color.FromArgb(252, 252, 252),
+                BorderStyle = BorderStyle.FixedSingle,
+                Visible = true // Always visible
+            };
+
+            // Create header panel with title and buttons
+            var headerPanel = new Panel
+            {
+                Height = 35, // Reduced height since everything is in one row
+                Dock = DockStyle.Top,
+                BackColor = Color.FromArgb(245, 245, 245)
+            };
+
+            // Create header label - positioned to the left
+            var headerLabel = new Label
+            {
+                Text = "File Explorer",
+                Location = new Point(10, 8), // Centered vertically in the 35px height
+                Size = new Size(85, 20),
+                BackColor = Color.Transparent,
+                ForeColor = Color.FromArgb(64, 64, 64),
+                Font = new Font("Segoe UI", 9, FontStyle.Bold), // Slightly smaller font
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+
+            // Home button - positioned from the right edge
+            var homeButton = new Button
+            {
+                Text = "🏠 Home",
+                Location = new Point(195, 5), // Right-aligned positioning
+                Size = new Size(50, 25), // Compact size
+                BackColor = Color.Transparent,
+                ForeColor = Color.FromArgb(64, 64, 64),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 7.5f),
+                TextAlign = ContentAlignment.MiddleCenter,
+                UseVisualStyleBackColor = false
+            };
+            homeButton.FlatAppearance.BorderSize = 0; // Remove border
+            homeButton.Click += HomeButton_Click;
+            homeButton.MouseUp += HomeButton_MouseUp;
+            
+            // Add hover effects for Home button
+            homeButton.MouseEnter += (s, e) => homeButton.BackColor = Color.FromArgb(230, 230, 230);
+            homeButton.MouseLeave += (s, e) => homeButton.BackColor = Color.Transparent;
+
+            // New Folder button - positioned next to Home button
+            var newFolderButton = new Button
+            {
+                Text = "📁+ New",
+                Location = new Point(250, 5), // Right-aligned positioning
+                Size = new Size(50, 25), // Compact size
+                BackColor = Color.Transparent,
+                ForeColor = Color.FromArgb(64, 64, 64),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 7.5f),
+                TextAlign = ContentAlignment.MiddleCenter,
+                UseVisualStyleBackColor = false
+            };
+            newFolderButton.FlatAppearance.BorderSize = 0; // Remove border
+            newFolderButton.Click += NewFolderButton_Click;
+            
+            // Add hover effects for New Folder button
+            newFolderButton.MouseEnter += (s, e) => newFolderButton.BackColor = Color.FromArgb(230, 230, 230);
+            newFolderButton.MouseLeave += (s, e) => newFolderButton.BackColor = Color.Transparent;
+
+            // Refresh button - positioned at the far right edge
+            var refreshButton = new Button
+            {
+                Text = "🔄",
+                Location = new Point(305, 5), // Far right positioning
+                Size = new Size(25, 25), // Compact size for icon
+                BackColor = Color.Transparent,
+                ForeColor = Color.FromArgb(64, 64, 64),
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 9),
+                TextAlign = ContentAlignment.MiddleCenter,
+                UseVisualStyleBackColor = false
+            };
+            refreshButton.FlatAppearance.BorderSize = 0; // Remove border
+            refreshButton.Click += RefreshButton_Click;
+            
+            // Add hover effects for Refresh button
+            refreshButton.MouseEnter += (s, e) => refreshButton.BackColor = Color.FromArgb(230, 230, 230);
+            refreshButton.MouseLeave += (s, e) => refreshButton.BackColor = Color.Transparent;
+
+            // Add all controls directly to header panel
+            headerPanel.Controls.AddRange(new Control[] { headerLabel, homeButton, newFolderButton, refreshButton });
+
+            // Create TreeView for file explorer
+            fileExplorerTreeView = new TreeView
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.FromArgb(252, 252, 252),
+                BorderStyle = BorderStyle.None,
+                Font = new Font("Segoe UI", 9),
+                ShowLines = true,
+                ShowPlusMinus = true,
+                ShowRootLines = true,
+                FullRowSelect = true,
+                HideSelection = false,
+                LabelEdit = true, // Enable inline editing
+                ImageList = CreateFileExplorerImageList()
+            };
+
+            // Add event handlers
+            fileExplorerTreeView.BeforeExpand += FileExplorerTreeView_BeforeExpand;
+            fileExplorerTreeView.NodeMouseDoubleClick += FileExplorerTreeView_NodeMouseDoubleClick;
+            fileExplorerTreeView.NodeMouseClick += FileExplorerTreeView_NodeMouseClick;
+            fileExplorerTreeView.BeforeLabelEdit += FileExplorerTreeView_BeforeLabelEdit;
+            fileExplorerTreeView.AfterLabelEdit += FileExplorerTreeView_AfterLabelEdit;
+            fileExplorerTreeView.MouseUp += FileExplorerTreeView_MouseUp;
+
+            // Populate with drives
+            PopulateFileExplorer();
+
+            fileExplorerPanel.Controls.Add(fileExplorerTreeView);
+            fileExplorerPanel.Controls.Add(headerPanel);
+        }
+
+        private Splitter CreateFileExplorerSplitter()
+        {
+            var splitter = new Splitter
+            {
+                Dock = DockStyle.Left,
+                Width = 4,
+                BackColor = Color.FromArgb(200, 200, 200),
+                BorderStyle = BorderStyle.None,
+                MinExtra = 200, // Minimum space for the main content area
+                MinSize = 150   // Minimum width for file explorer
+            };
+
+            // Add visual feedback for resizing
+            splitter.SplitterMoved += (sender, e) =>
+            {
+                // Optional: Save the splitter position to settings
+                try
+                {
+                    using (var key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\Blueshot"))
+                    {
+                        key?.SetValue("FileExplorerWidth", fileExplorerPanel.Width);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError("Failed to save file explorer width", "SplitterMoved", ex);
+                }
+            };
+
+            return splitter;
+        }
+
+        private void ToggleFileExplorer()
+        {
+            isFileExplorerVisible = !isFileExplorerVisible;
+            fileExplorerPanel.Visible = isFileExplorerVisible;
+            
+            // Update the file explorer button appearance
+            var fileExplorerButton = toolStrip.Items.Cast<ToolStripItem>()
+                .FirstOrDefault(item => item.ToolTipText == "Toggle File Explorer") as ToolStripButton;
+            
+            if (fileExplorerButton != null)
+            {
+                fileExplorerButton.Checked = isFileExplorerVisible;
+            }
+            
+            // Update save location status
+            UpdateSaveLocationStatus();
+        }
+
+        private ImageList CreateFileExplorerImageList()
+        {
+            var imageList = new ImageList
+            {
+                ImageSize = new Size(16, 16),
+                ColorDepth = ColorDepth.Depth32Bit
+            };
+
+            // Create simple icons for folder and file
+            imageList.Images.Add("folder", CreateFolderIcon16());
+            imageList.Images.Add("file", CreateFileIcon16());
+            imageList.Images.Add("drive", CreateDriveIcon16());
+
+            return imageList;
+        }
+
+        private Bitmap CreateFolderIcon16()
+        {
+            var icon = new Bitmap(16, 16);
+            using (var g = Graphics.FromImage(icon))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                using (var brush = new SolidBrush(Color.FromArgb(255, 193, 7)))
+                {
+                    g.FillRectangle(brush, 1, 4, 14, 10);
+                    g.FillRectangle(brush, 1, 2, 6, 3);
+                }
+                using (var pen = new Pen(Color.FromArgb(255, 152, 0), 1))
+                {
+                    g.DrawRectangle(pen, 1, 4, 14, 10);
+                    g.DrawLine(pen, 1, 2, 7, 2);
+                    g.DrawLine(pen, 7, 2, 7, 4);
+                    g.DrawLine(pen, 1, 2, 1, 4);
+                }
+            }
+            return icon;
+        }
+
+        private Bitmap CreateFileIcon16()
+        {
+            var icon = new Bitmap(16, 16);
+            using (var g = Graphics.FromImage(icon))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                using (var brush = new SolidBrush(Color.FromArgb(96, 125, 139)))
+                {
+                    g.FillRectangle(brush, 3, 1, 10, 14);
+                }
+                using (var pen = new Pen(Color.FromArgb(69, 90, 100), 1))
+                {
+                    g.DrawRectangle(pen, 3, 1, 10, 14);
+                }
+                using (var pen = new Pen(Color.White, 1))
+                {
+                    g.DrawLine(pen, 5, 4, 11, 4);
+                    g.DrawLine(pen, 5, 6, 9, 6);
+                    g.DrawLine(pen, 5, 8, 11, 8);
+                    g.DrawLine(pen, 5, 10, 8, 10);
+                }
+            }
+            return icon;
+        }
+
+        private Bitmap CreateDriveIcon16()
+        {
+            var icon = new Bitmap(16, 16);
+            using (var g = Graphics.FromImage(icon))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                using (var brush = new SolidBrush(Color.FromArgb(33, 150, 243)))
+                {
+                    g.FillRectangle(brush, 2, 4, 12, 8);
+                }
+                using (var pen = new Pen(Color.FromArgb(25, 118, 210), 1))
+                {
+                    g.DrawRectangle(pen, 2, 4, 12, 8);
+                }
+                using (var brush = new SolidBrush(Color.White))
+                {
+                    g.FillEllipse(brush, 4, 6, 4, 4);
+                }
+            }
+            return icon;
+        }
+
+        private void PopulateFileExplorer()
+        {
+            fileExplorerTreeView.Nodes.Clear();
+            
+            try
+            {
+                // Only show content from the home folder
+                string homePath = GetCurrentHomePath();
+                if (Directory.Exists(homePath))
+                {
+                    var homeNode = new TreeNode(Path.GetFileName(homePath) ?? "Home")
+                    {
+                        Tag = homePath,
+                        ImageKey = "folder",
+                        SelectedImageKey = "folder"
+                    };
+                    
+                    // Add subdirectories and files to the home node
+                    PopulateDirectoryNode(homeNode, homePath);
+                    homeNode.Expand(); // Expand the home folder by default
+                    
+                    fileExplorerTreeView.Nodes.Add(homeNode);
+                    
+                    // Select the home node by default
+                    fileExplorerTreeView.SelectedNode = homeNode;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to populate file explorer", "PopulateFileExplorer", ex);
+            }
+        }
+
+        private void PopulateDirectoryNode(TreeNode node, string path)
+        {
+            try
+            {
+                if (!Directory.Exists(path)) return;
+
+                // Add subdirectories
+                foreach (var directory in Directory.GetDirectories(path))
+                {
+                    var dirInfo = new DirectoryInfo(directory);
+                    if (!dirInfo.Attributes.HasFlag(FileAttributes.Hidden))
+                    {
+                        var subNode = new TreeNode(dirInfo.Name)
+                        {
+                            Tag = directory,
+                            ImageKey = "folder",
+                            SelectedImageKey = "folder"
+                        };
+                        
+                        // Check if this directory has subdirectories
+                        try
+                        {
+                            if (Directory.GetDirectories(directory).Length > 0)
+                            {
+                                subNode.Nodes.Add("Loading...");
+                            }
+                        }
+                        catch { /* Ignore access denied */ }
+                        
+                        node.Nodes.Add(subNode);
+                    }
+                }
+
+                // Add files (limit to common image files for preview app)
+                var imageExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp" };
+                foreach (var file in Directory.GetFiles(path))
+                {
+                    var fileInfo = new FileInfo(file);
+                    if (!fileInfo.Attributes.HasFlag(FileAttributes.Hidden) &&
+                        imageExtensions.Contains(fileInfo.Extension.ToLower()))
+                    {
+                        var fileNode = new TreeNode(fileInfo.Name)
+                        {
+                            Tag = file,
+                            ImageKey = "file",
+                            SelectedImageKey = "file"
+                        };
+                        node.Nodes.Add(fileNode);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Failed to populate directory node: {path}", "PopulateDirectoryNode", ex);
+            }
+        }
+
+        private void FileExplorerTreeView_BeforeExpand(object sender, TreeViewCancelEventArgs e)
+        {
+            try
+            {
+                var node = e.Node;
+                var path = node.Tag?.ToString();
+                
+                // Only allow expansion within the home folder
+                string homePath = GetCurrentHomePath();
+                if (!string.IsNullOrEmpty(path) && !IsPathWithinHome(path, homePath))
+                {
+                    e.Cancel = true;
+                    return;
+                }
+                
+                // Clear dummy nodes
+                if (node.Nodes.Count == 1 && node.Nodes[0].Text == "Loading...")
+                {
+                    node.Nodes.Clear();
+                    PopulateDirectoryNode(node, path);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to expand file explorer node", "FileExplorerTreeView_BeforeExpand", ex);
+            }
+        }
+
+        private bool IsPathWithinHome(string path, string homePath)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(homePath))
+                    return false;
+                    
+                string normalizedPath = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+                string normalizedHome = Path.GetFullPath(homePath).TrimEnd(Path.DirectorySeparatorChar);
+                
+                return normalizedPath.StartsWith(normalizedHome, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private void FileExplorerTreeView_NodeMouseDoubleClick(object sender, TreeNodeMouseClickEventArgs e)
+        {
+            try
+            {
+                var path = e.Node.Tag?.ToString();
+                if (File.Exists(path))
+                {
+                    // Open the image file in the preview
+                    LoadImageFromFile(path);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to open file from explorer", "FileExplorerTreeView_NodeMouseDoubleClick", ex);
+                MessageBox.Show($"Failed to open file: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void LoadImageFromFile(string filePath)
+        {
+            try
+            {
+                using (var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read))
+                {
+                    var image = new Bitmap(fileStream);
+                    
+                    // Create a new screenshot item
+                    var screenshotItem = new ScreenshotItem(image)
+                    {
+                        FileName = Path.GetFileName(filePath),
+                        CaptureTime = File.GetLastWriteTime(filePath)
+                    };
+                    
+                    // Replace current screenshots with this new one
+                    screenshots.Clear();
+                    screenshots.Add(screenshotItem);
+                    currentScreenshotIndex = 0;
+                    
+                    // Load the screenshot
+                    LoadScreenshot(0);
+                    
+                    // Update UI
+                    UpdateNavigationButtons();
+                    UpdateScreenshotCounter();
+                    this.Text = $"Screenshot Preview - {screenshotItem.FileName} - Blueshot";
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Failed to load image from file: {filePath}", "LoadImageFromFile", ex);
+                throw;
+            }
+        }
+
+        private void HomeButton_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                // Navigate to user's preferred home directory
+                string homePath = GetCurrentHomePath();
+                NavigateToPath(homePath);
+                UpdateSaveLocationStatus();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to navigate to home directory", "HomeButton_Click", ex);
+                MessageBox.Show("Failed to navigate to home directory.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void NewFolderButton_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                // Get the currently selected node
+                var selectedNode = fileExplorerTreeView.SelectedNode;
+                if (selectedNode == null)
+                {
+                    MessageBox.Show("Please select a directory first.", "Information", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                string currentPath = selectedNode.Tag?.ToString();
+                if (string.IsNullOrEmpty(currentPath) || !Directory.Exists(currentPath))
+                {
+                    MessageBox.Show("Please select a valid directory.", "Information", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                // Create a unique folder name
+                string baseName = "New Folder";
+                string newFolderName = baseName;
+                int counter = 1;
+                string newFolderPath = Path.Combine(currentPath, newFolderName);
+
+                while (Directory.Exists(newFolderPath))
+                {
+                    newFolderName = $"{baseName} ({counter})";
+                    newFolderPath = Path.Combine(currentPath, newFolderName);
+                    counter++;
+                }
+
+                // Create the directory
+                Directory.CreateDirectory(newFolderPath);
+
+                // Expand the parent node if it's not already expanded
+                if (!selectedNode.IsExpanded)
+                {
+                    selectedNode.Expand();
+                }
+                else
+                {
+                    // Refresh the node to show the new folder
+                    RefreshNodeChildren(selectedNode);
+                }
+
+                // Find the newly created folder node and start editing
+                foreach (TreeNode childNode in selectedNode.Nodes)
+                {
+                    if (childNode.Text == newFolderName && childNode.Tag?.ToString() == newFolderPath)
+                    {
+                        fileExplorerTreeView.SelectedNode = childNode;
+                        childNode.BeginEdit();
+                        break;
+                    }
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                MessageBox.Show("Access denied. You don't have permission to create a folder in this location.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to create new folder", "NewFolderButton_Click", ex);
+                MessageBox.Show($"Failed to create folder: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void RefreshButton_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                PopulateFileExplorer();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to refresh file explorer", "RefreshButton_Click", ex);
+                MessageBox.Show("Failed to refresh file explorer.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void FileExplorerTreeView_NodeMouseClick(object sender, TreeNodeMouseClickEventArgs e)
+        {
+            // Select the node when clicked (for context menu support in future)
+            fileExplorerTreeView.SelectedNode = e.Node;
+            
+            // Update status bar to show selected save location
+            UpdateSaveLocationStatus();
+        }
+
+        private void UpdateSaveLocationStatus()
+        {
+            try
+            {
+                string saveDirectory = GetSelectedSaveDirectory();
+                string directoryName = Path.GetFileName(saveDirectory.TrimEnd(Path.DirectorySeparatorChar));
+                
+                if (string.IsNullOrEmpty(directoryName))
+                {
+                    directoryName = saveDirectory;
+                }
+                
+                // Update status to show where files will be saved
+                if (isFileExplorerVisible && fileExplorerTreeView?.SelectedNode != null)
+                {
+                    statusLabel.Text = $"Save location: {directoryName}";
+                }
+                else
+                {
+                    statusLabel.Text = "Save location: Desktop (default)";
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to update save location status", "UpdateSaveLocationStatus", ex);
+                statusLabel.Text = "Ready";
+            }
+        }
+
+        private void CreateFileExplorerContextMenu()
+        {
+            fileExplorerContextMenu = new ContextMenuStrip
+            {
+                BackColor = Color.FromArgb(252, 252, 252),
+                Font = new Font("Segoe UI", 9)
+            };
+
+            // Rename menu item
+            var renameMenuItem = new ToolStripMenuItem("Rename")
+            {
+                Image = CreateRenameIcon16(),
+                ShortcutKeyDisplayString = "F2"
+            };
+            renameMenuItem.Click += RenameMenuItem_Click;
+
+            // Delete menu item
+            var deleteMenuItem = new ToolStripMenuItem("Delete")
+            {
+                Image = CreateDeleteIcon16(),
+                ShortcutKeyDisplayString = "Del"
+            };
+            deleteMenuItem.Click += DeleteMenuItem_Click;
+
+            // Separator
+            var separator1 = new ToolStripSeparator();
+
+            // Properties menu item
+            var propertiesMenuItem = new ToolStripMenuItem("Properties")
+            {
+                Image = CreatePropertiesIcon16()
+            };
+            propertiesMenuItem.Click += PropertiesMenuItem_Click;
+
+            fileExplorerContextMenu.Items.AddRange(new ToolStripItem[] {
+                renameMenuItem,
+                deleteMenuItem,
+                separator1,
+                propertiesMenuItem
+            });
+        }
+
+        private void FileExplorerTreeView_MouseUp(object sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Right)
+            {
+                // Get the node at the mouse position
+                TreeNode clickedNode = fileExplorerTreeView.GetNodeAt(e.Location);
+                if (clickedNode != null)
+                {
+                    // Select the node
+                    fileExplorerTreeView.SelectedNode = clickedNode;
+                    
+                    // Check if it's a valid node for context menu (not a loading node)
+                    if (clickedNode.Tag != null && clickedNode.Text != "Loading...")
+                    {
+                        string path = clickedNode.Tag.ToString();
+                        bool isFile = File.Exists(path);
+                        bool isDirectory = Directory.Exists(path);
+                        bool isDrive = path.Length <= 3 && path.EndsWith("\\");
+                        
+                        // Only show context menu for files and directories (not drives)
+                        if ((isFile || isDirectory) && !isDrive)
+                        {
+                            // Update menu items visibility based on item type
+                            UpdateContextMenuForItem(isFile, isDirectory);
+                            fileExplorerContextMenu.Show(fileExplorerTreeView, e.Location);
+                        }
+                    }
+                }
+            }
+        }
+
+        private void UpdateContextMenuForItem(bool isFile, bool isDirectory)
+        {
+            // All items are available for both files and directories
+            foreach (ToolStripItem item in fileExplorerContextMenu.Items)
+            {
+                item.Enabled = true;
+            }
+        }
+
+        private void RenameMenuItem_Click(object sender, EventArgs e)
+        {
+            var selectedNode = fileExplorerTreeView.SelectedNode;
+            if (selectedNode != null && selectedNode.Tag != null)
+            {
+                selectedNode.BeginEdit();
+            }
+        }
+
+        private void DeleteMenuItem_Click(object sender, EventArgs e)
+        {
+            var selectedNode = fileExplorerTreeView.SelectedNode;
+            if (selectedNode == null || selectedNode.Tag == null)
+                return;
+
+            string path = selectedNode.Tag.ToString();
+            string itemName = selectedNode.Text;
+            bool isFile = File.Exists(path);
+            bool isDirectory = Directory.Exists(path);
+
+            if (!isFile && !isDirectory)
+                return;
+
+            try
+            {
+                string itemType = isFile ? "file" : "folder";
+                var result = MessageBox.Show(
+                    $"Are you sure you want to delete the {itemType} '{itemName}'?{(isDirectory ? "\n\nThis will delete the folder and all its contents." : "")}",
+                    $"Delete {itemType}",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question);
+
+                if (result == DialogResult.Yes)
+                {
+                    if (isFile)
+                    {
+                        // Try to remove read-only attribute if present
+                        try
+                        {
+                            FileAttributes attributes = File.GetAttributes(path);
+                            if ((attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly)
+                            {
+                                File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
+                            }
+                        }
+                        catch { /* Ignore attribute errors */ }
+
+                        File.Delete(path);
+                    }
+                    else if (isDirectory)
+                    {
+                        // For directories, try to remove read-only attributes recursively
+                        try
+                        {
+                            RemoveReadOnlyAttributes(path);
+                        }
+                        catch { /* Ignore attribute errors */ }
+
+                        Directory.Delete(path, true); // true = recursive delete
+                    }
+
+                    // Remove the node from the tree
+                    selectedNode.Remove();
+                    
+                    statusLabel.Text = $"{itemType} deleted successfully";
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                MessageBox.Show("Access denied. You don't have permission to delete this item.\n\nThis might be due to:\n• The file/folder is currently in use\n• OneDrive sync is in progress\n• Insufficient permissions", "Access Denied", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            catch (IOException ex) when (ex.Message.Contains("not empty") || ex.Message.Contains("not be deleted"))
+            {
+                MessageBox.Show("The directory is not empty and cannot be deleted.\n\nPlease ensure:\n• All files in the folder are closed\n• No applications are using files in this folder\n• OneDrive sync is complete", "Directory Not Empty", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            catch (IOException ex) when (ex.Message.Contains("denied") || ex.Message.Contains("access"))
+            {
+                MessageBox.Show("Access to the path is denied.\n\nThis might be due to:\n• OneDrive is syncing this folder\n• The folder is open in another application\n• Insufficient permissions\n\nTry closing all programs and wait for OneDrive sync to complete.", "Access Denied", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            catch (IOException ex)
+            {
+                MessageBox.Show($"Failed to delete item: {ex.Message}\n\nTip: If this is a OneDrive folder, try waiting for sync to complete or temporarily pausing OneDrive sync.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Failed to delete item: {path}", "DeleteMenuItem_Click", ex);
+                MessageBox.Show($"Failed to delete item: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void RemoveReadOnlyAttributes(string directoryPath)
+        {
+            try
+            {
+                // Remove read-only attribute from the directory itself
+                DirectoryInfo dirInfo = new DirectoryInfo(directoryPath);
+                if ((dirInfo.Attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly)
+                {
+                    dirInfo.Attributes &= ~FileAttributes.ReadOnly;
+                }
+
+                // Remove read-only attributes from all files in the directory
+                foreach (string file in Directory.GetFiles(directoryPath, "*", SearchOption.AllDirectories))
+                {
+                    try
+                    {
+                        FileAttributes attributes = File.GetAttributes(file);
+                        if ((attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly)
+                        {
+                            File.SetAttributes(file, attributes & ~FileAttributes.ReadOnly);
+                        }
+                    }
+                    catch { /* Ignore individual file errors */ }
+                }
+
+                // Remove read-only attributes from all subdirectories
+                foreach (string dir in Directory.GetDirectories(directoryPath, "*", SearchOption.AllDirectories))
+                {
+                    try
+                    {
+                        DirectoryInfo subDirInfo = new DirectoryInfo(dir);
+                        if ((subDirInfo.Attributes & FileAttributes.ReadOnly) == FileAttributes.ReadOnly)
+                        {
+                            subDirInfo.Attributes &= ~FileAttributes.ReadOnly;
+                        }
+                    }
+                    catch { /* Ignore individual directory errors */ }
+                }
+            }
+            catch { /* Ignore errors in this helper method */ }
+        }
+
+        private void PropertiesMenuItem_Click(object sender, EventArgs e)
+        {
+            var selectedNode = fileExplorerTreeView.SelectedNode;
+            if (selectedNode == null || selectedNode.Tag == null)
+                return;
+
+            string path = selectedNode.Tag.ToString();
+            
+            try
+            {
+                if (File.Exists(path) || Directory.Exists(path))
+                {
+                    ShowFileProperties(path);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Failed to show properties for: {path}", "PropertiesMenuItem_Click", ex);
+                MessageBox.Show($"Failed to show properties: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void ShowFileProperties(string path)
+        {
+            try
+            {
+                FileInfo fileInfo = null;
+                DirectoryInfo dirInfo = null;
+                bool isFile = File.Exists(path);
+                
+                if (isFile)
+                {
+                    fileInfo = new FileInfo(path);
+                }
+                else
+                {
+                    dirInfo = new DirectoryInfo(path);
+                }
+
+                string properties = isFile ? 
+                    $"File: {fileInfo.Name}\n" +
+                    $"Location: {fileInfo.DirectoryName}\n" +
+                    $"Size: {FormatFileSize(fileInfo.Length)}\n" +
+                    $"Created: {fileInfo.CreationTime:yyyy-MM-dd HH:mm:ss}\n" +
+                    $"Modified: {fileInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss}\n" +
+                    $"Attributes: {fileInfo.Attributes}"
+                    :
+                    $"Folder: {dirInfo.Name}\n" +
+                    $"Location: {dirInfo.Parent?.FullName ?? "Root"}\n" +
+                    $"Created: {dirInfo.CreationTime:yyyy-MM-dd HH:mm:ss}\n" +
+                    $"Modified: {dirInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss}\n" +
+                    $"Attributes: {dirInfo.Attributes}";
+
+                MessageBox.Show(properties, "Properties", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Failed to get properties for: {path}", "ShowFileProperties", ex);
+                MessageBox.Show($"Failed to get properties: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private string FormatFileSize(long bytes)
+        {
+            string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
+            int counter = 0;
+            decimal number = bytes;
+            while (Math.Round(number / 1024) >= 1)
+            {
+                number /= 1024;
+                counter++;
+            }
+            return $"{number:n1} {suffixes[counter]}";
+        }
+
+        private void CreateHomeButtonContextMenu()
+        {
+            homeButtonContextMenu = new ContextMenuStrip
+            {
+                BackColor = Color.FromArgb(252, 252, 252),
+                Font = new Font("Segoe UI", 9)
+            };
+
+            // Default home locations
+            var documentsMenuItem = new ToolStripMenuItem("📁 Documents")
+            {
+                Tag = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+            };
+            documentsMenuItem.Click += HomeLocationMenuItem_Click;
+
+            var desktopMenuItem = new ToolStripMenuItem("🖥️ Desktop")
+            {
+                Tag = Environment.GetFolderPath(Environment.SpecialFolder.Desktop)
+            };
+            desktopMenuItem.Click += HomeLocationMenuItem_Click;
+
+            var picturesMenuItem = new ToolStripMenuItem("🖼️ Pictures")
+            {
+                Tag = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures)
+            };
+            picturesMenuItem.Click += HomeLocationMenuItem_Click;
+
+            var downloadsMenuItem = new ToolStripMenuItem("📥 Downloads")
+            {
+                Tag = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads")
+            };
+            downloadsMenuItem.Click += HomeLocationMenuItem_Click;
+
+            var separator1 = new ToolStripSeparator();
+
+            // Custom location
+            var customMenuItem = new ToolStripMenuItem("📂 Choose Custom Location...")
+            {
+                Tag = "custom"
+            };
+            customMenuItem.Click += HomeLocationMenuItem_Click;
+
+            var separator2 = new ToolStripSeparator();
+
+            // Current custom location (if any)
+            var currentCustomMenuItem = new ToolStripMenuItem("Current: Default")
+            {
+                Enabled = false,
+                Font = new Font("Segoe UI", 9, FontStyle.Italic)
+            };
+
+            homeButtonContextMenu.Items.AddRange(new ToolStripItem[] {
+                documentsMenuItem,
+                desktopMenuItem,
+                picturesMenuItem,
+                downloadsMenuItem,
+                separator1,
+                customMenuItem,
+                separator2,
+                currentCustomMenuItem
+            });
+
+            // Update the current location display
+            UpdateHomeButtonContextMenuStatus();
+        }
+
+        private void HomeButton_MouseUp(object sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Right)
+            {
+                // Update the context menu status before showing
+                UpdateHomeButtonContextMenuStatus();
+                homeButtonContextMenu.Show((Button)sender, e.Location);
+            }
+        }
+
+        private void HomeLocationMenuItem_Click(object sender, EventArgs e)
+        {
+            var menuItem = sender as ToolStripMenuItem;
+            if (menuItem?.Tag == null) return;
+
+            try
+            {
+                string tag = menuItem.Tag.ToString();
+                
+                if (tag == "custom")
+                {
+                    // Show folder browser dialog
+                    using (var folderDialog = new FolderBrowserDialog())
+                    {
+                        folderDialog.Description = "Select your preferred home folder:";
+                        folderDialog.ShowNewFolderButton = true;
+                        
+                        // Set initial directory
+                        if (!string.IsNullOrEmpty(customHomePath) && Directory.Exists(customHomePath))
+                        {
+                            folderDialog.SelectedPath = customHomePath;
+                        }
+                        else
+                        {
+                            folderDialog.SelectedPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                        }
+
+                        if (folderDialog.ShowDialog() == DialogResult.OK)
+                        {
+                            customHomePath = folderDialog.SelectedPath;
+                            SaveSettings(); // Save the custom path
+                            NavigateToPath(customHomePath);
+                            UpdateSaveLocationStatus();
+                            UpdateHomeButtonContextMenuStatus();
+                        }
+                    }
+                }
+                else
+                {
+                    // Navigate to predefined location
+                    string path = tag;
+                    if (Directory.Exists(path))
+                    {
+                        customHomePath = path; // Update custom home path
+                        SaveSettings(); // Save the custom path
+                        NavigateToPath(path);
+                        UpdateSaveLocationStatus();
+                        UpdateHomeButtonContextMenuStatus();
+                    }
+                    else
+                    {
+                        MessageBox.Show($"The folder '{path}' does not exist.", "Folder Not Found", 
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to set home location", "HomeLocationMenuItem_Click", ex);
+                MessageBox.Show($"Failed to set home location: {ex.Message}", "Error", 
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void UpdateHomeButtonContextMenuStatus()
+        {
+            try
+            {
+                // Find the current location status menu item (last item)
+                var statusItem = homeButtonContextMenu.Items[homeButtonContextMenu.Items.Count - 1] as ToolStripMenuItem;
+                if (statusItem != null)
+                {
+                    string currentPath = GetCurrentHomePath();
+                    string displayName = GetHomePathDisplayName(currentPath);
+                    statusItem.Text = $"Current: {displayName}";
+                }
+
+                // Update check marks for current selection
+                foreach (ToolStripItem item in homeButtonContextMenu.Items)
+                {
+                    if (item is ToolStripMenuItem menuItem && menuItem.Tag != null && menuItem.Tag.ToString() != "custom")
+                    {
+                        string currentPath = GetCurrentHomePath();
+                        menuItem.Checked = string.Equals(menuItem.Tag.ToString(), currentPath, StringComparison.OrdinalIgnoreCase);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to update home button context menu status", "UpdateHomeButtonContextMenuStatus", ex);
+            }
+        }
+
+        private string GetCurrentHomePath()
+        {
+            if (!string.IsNullOrEmpty(customHomePath) && Directory.Exists(customHomePath))
+            {
+                return customHomePath;
+            }
+            return Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
+        }
+
+        private string GetHomePathDisplayName(string path)
+        {
+            try
+            {
+                string documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+                string picturesPath = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
+                string downloadsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+
+                if (string.Equals(path, documentsPath, StringComparison.OrdinalIgnoreCase))
+                    return "Documents";
+                else if (string.Equals(path, desktopPath, StringComparison.OrdinalIgnoreCase))
+                    return "Desktop";
+                else if (string.Equals(path, picturesPath, StringComparison.OrdinalIgnoreCase))
+                    return "Pictures";
+                else if (string.Equals(path, downloadsPath, StringComparison.OrdinalIgnoreCase))
+                    return "Downloads";
+                else
+                    return Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar)) ?? path;
+            }
+            catch
+            {
+                return "Unknown";
+            }
+        }
+
+        private void LoadSettings()
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\Blueshot"))
+                {
+                    string savedHomePath = key?.GetValue("CustomHomePath") as string;
+                    if (!string.IsNullOrEmpty(savedHomePath) && Directory.Exists(savedHomePath))
+                    {
+                        customHomePath = savedHomePath;
+                    }
+                    
+                    // Load file explorer width
+                    object savedWidth = key?.GetValue("FileExplorerWidth");
+                    if (savedWidth != null && int.TryParse(savedWidth.ToString(), out int width))
+                    {
+                        if (width >= 150 && width <= 800) // Reasonable bounds
+                        {
+                            fileExplorerPanel.Width = width;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to load settings", "LoadSettings", ex);
+                // Continue with default settings if loading fails
+            }
+        }
+
+        private void SaveSettings()
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\Blueshot"))
+                {
+                    if (!string.IsNullOrEmpty(customHomePath))
+                    {
+                        key?.SetValue("CustomHomePath", customHomePath);
+                    }
+                    else
+                    {
+                        key?.DeleteValue("CustomHomePath", false);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to save settings", "SaveSettings", ex);
+            }
+        }
+
+        private void InitializeFileExplorerToHome()
+        {
+            try
+            {
+                string homePath = GetCurrentHomePath();
+                if (Directory.Exists(homePath))
+                {
+                    NavigateToPath(homePath);
+                    UpdateSaveLocationStatus();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to initialize file explorer to home", "InitializeFileExplorerToHome", ex);
+            }
+        }
+
+        private void GoToHomeFolder()
+        {
+            try
+            {
+                string homePath = GetCurrentHomePath();
+                NavigateToPath(homePath);
+                UpdateSaveLocationStatus();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to navigate to home folder", "GoToHomeFolder", ex);
+                MessageBox.Show("Failed to navigate to home folder.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private Bitmap CreateRenameIcon16()
+        {
+            var icon = new Bitmap(16, 16);
+            using (var g = Graphics.FromImage(icon))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                
+                // Pencil body
+                using (var brush = new SolidBrush(Color.FromArgb(255, 193, 7)))
+                {
+                    g.FillRectangle(brush, 2, 10, 8, 2);
+                }
+                
+                // Pencil tip
+                using (var brush = new SolidBrush(Color.FromArgb(96, 125, 139)))
+                {
+                    var points = new Point[] { new Point(10, 10), new Point(13, 7), new Point(10, 12) };
+                    g.FillPolygon(brush, points);
+                }
+                
+                // Paper
+                using (var brush = new SolidBrush(Color.FromArgb(240, 240, 240)))
+                {
+                    g.FillRectangle(brush, 4, 2, 8, 10);
+                }
+                
+                using (var pen = new Pen(Color.FromArgb(96, 96, 96), 1))
+                {
+                    g.DrawRectangle(pen, 4, 2, 8, 10);
+                    g.DrawLine(pen, 6, 4, 10, 4);
+                    g.DrawLine(pen, 6, 6, 10, 6);
+                    g.DrawLine(pen, 6, 8, 8, 8);
+                }
+            }
+            return icon;
+        }
+
+        private Bitmap CreateDeleteIcon16()
+        {
+            var icon = new Bitmap(16, 16);
+            using (var g = Graphics.FromImage(icon))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                
+                // Trash can body
+                using (var brush = new SolidBrush(Color.FromArgb(244, 67, 54)))
+                {
+                    g.FillRectangle(brush, 3, 5, 10, 9);
+                }
+                
+                // Trash can lid
+                using (var brush = new SolidBrush(Color.FromArgb(198, 40, 40)))
+                {
+                    g.FillRectangle(brush, 2, 3, 12, 2);
+                }
+                
+                // Handle
+                using (var pen = new Pen(Color.FromArgb(198, 40, 40), 2))
+                {
+                    g.DrawLine(pen, 6, 1, 6, 3);
+                    g.DrawLine(pen, 10, 1, 10, 3);
+                    g.DrawLine(pen, 6, 1, 10, 1);
+                }
+                
+                // Vertical lines
+                using (var pen = new Pen(Color.White, 1))
+                {
+                    g.DrawLine(pen, 6, 7, 6, 12);
+                    g.DrawLine(pen, 8, 7, 8, 12);
+                    g.DrawLine(pen, 10, 7, 10, 12);
+                }
+            }
+            return icon;
+        }
+
+        private Bitmap CreatePropertiesIcon16()
+        {
+            var icon = new Bitmap(16, 16);
+            using (var g = Graphics.FromImage(icon))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                
+                // Document background
+                using (var brush = new SolidBrush(Color.FromArgb(240, 240, 240)))
+                {
+                    g.FillRectangle(brush, 3, 1, 10, 14);
+                }
+                
+                // Document border
+                using (var pen = new Pen(Color.FromArgb(96, 125, 139), 1))
+                {
+                    g.DrawRectangle(pen, 3, 1, 10, 14);
+                }
+                
+                // Info icon (i)
+                using (var brush = new SolidBrush(Color.FromArgb(33, 150, 243)))
+                {
+                    g.FillEllipse(brush, 7, 3, 2, 2);
+                    g.FillRectangle(brush, 7, 6, 2, 6);
+                }
+            }
+            return icon;
+        }
+
+        private string GetCurrentSelectedPath()
+        {
+            var selectedNode = fileExplorerTreeView.SelectedNode;
+            if (selectedNode != null)
+            {
+                string path = selectedNode.Tag?.ToString();
+                if (!string.IsNullOrEmpty(path) && Directory.Exists(path))
+                {
+                    return path;
+                }
+            }
+            
+            // Default to user's Documents folder if nothing selected
+            return Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        }
+
+        private void NavigateToPath(string path)
+        {
+            try
+            {
+                if (!Directory.Exists(path))
+                {
+                    MessageBox.Show("The specified path does not exist.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                // Find and expand the node for this path
+                TreeNode nodeToSelect = FindNodeByPath(path);
+                if (nodeToSelect != null)
+                {
+                    fileExplorerTreeView.SelectedNode = nodeToSelect;
+                    nodeToSelect.EnsureVisible();
+                    nodeToSelect.Expand();
+                }
+                else
+                {
+                    // If not found, refresh and try to navigate to the parent directory
+                    PopulateFileExplorer();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Failed to navigate to path: {path}", "NavigateToPath", ex);
+                MessageBox.Show($"Failed to navigate to path: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private TreeNode FindNodeByPath(string path)
+        {
+            foreach (TreeNode rootNode in fileExplorerTreeView.Nodes)
+            {
+                TreeNode result = FindNodeByPathRecursive(rootNode, path);
+                if (result != null)
+                    return result;
+            }
+            return null;
+        }
+
+        private TreeNode FindNodeByPathRecursive(TreeNode node, string path)
+        {
+            string nodePath = node.Tag?.ToString();
+            if (string.Equals(nodePath, path, StringComparison.OrdinalIgnoreCase))
+            {
+                return node;
+            }
+
+            // If the path starts with this node's path, search in children
+            if (!string.IsNullOrEmpty(nodePath) && path.StartsWith(nodePath, StringComparison.OrdinalIgnoreCase))
+            {
+                // Expand node if needed to load children
+                if (node.Nodes.Count == 1 && node.Nodes[0].Text == "Loading...")
+                {
+                    var cancelArgs = new TreeViewCancelEventArgs(node, false, TreeViewAction.Expand);
+                    FileExplorerTreeView_BeforeExpand(fileExplorerTreeView, cancelArgs);
+                }
+
+                foreach (TreeNode childNode in node.Nodes)
+                {
+                    TreeNode result = FindNodeByPathRecursive(childNode, path);
+                    if (result != null)
+                        return result;
+                }
+            }
+
+            return null;
+        }
+
+        private void RefreshCurrentNode()
+        {
+            try
+            {
+                var selectedNode = fileExplorerTreeView.SelectedNode;
+                if (selectedNode != null)
+                {
+                    RefreshNodeChildren(selectedNode);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to refresh current node", "RefreshCurrentNode", ex);
+            }
+        }
+
+        private void RefreshNodeChildren(TreeNode node)
+        {
+            try
+            {
+                // Store the expanded state
+                bool wasExpanded = node.IsExpanded;
+                
+                // Clear and reload the node
+                node.Nodes.Clear();
+                node.Nodes.Add("Loading...");
+                
+                // Trigger expansion to reload
+                var cancelArgs = new TreeViewCancelEventArgs(node, false, TreeViewAction.Expand);
+                FileExplorerTreeView_BeforeExpand(fileExplorerTreeView, cancelArgs);
+                
+                if (wasExpanded)
+                {
+                    node.Expand();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to refresh node children", "RefreshNodeChildren", ex);
+            }
+        }
+
+        private void FileExplorerTreeView_BeforeLabelEdit(object sender, NodeLabelEditEventArgs e)
+        {
+            try
+            {
+                // Only allow editing of folder nodes (not drives)
+                string path = e.Node.Tag?.ToString();
+                if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
+                {
+                    e.CancelEdit = true;
+                    return;
+                }
+
+                // Don't allow editing of drive nodes
+                if (path.Length <= 3 && path.EndsWith("\\"))
+                {
+                    e.CancelEdit = true;
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Error in BeforeLabelEdit", "FileExplorerTreeView_BeforeLabelEdit", ex);
+                e.CancelEdit = true;
+            }
+        }
+
+        private void FileExplorerTreeView_AfterLabelEdit(object sender, NodeLabelEditEventArgs e)
+        {
+            try
+            {
+                // If the edit was cancelled or the label is null/empty, don't proceed
+                if (e.CancelEdit || string.IsNullOrWhiteSpace(e.Label))
+                {
+                    return;
+                }
+
+                string oldPath = e.Node.Tag?.ToString();
+                if (string.IsNullOrEmpty(oldPath) || !Directory.Exists(oldPath))
+                {
+                    e.CancelEdit = true;
+                    return;
+                }
+
+                string parentPath = Directory.GetParent(oldPath)?.FullName;
+                if (string.IsNullOrEmpty(parentPath))
+                {
+                    e.CancelEdit = true;
+                    return;
+                }
+
+                string newName = e.Label.Trim();
+                string newPath = Path.Combine(parentPath, newName);
+
+                // Check if the new name is valid
+                if (newName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+                {
+                    MessageBox.Show("The folder name contains invalid characters.", "Invalid Name", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    e.CancelEdit = true;
+                    return;
+                }
+
+                // Check if a folder with the new name already exists
+                if (Directory.Exists(newPath) && !string.Equals(oldPath, newPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    MessageBox.Show("A folder with this name already exists.", "Name Conflict", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    e.CancelEdit = true;
+                    return;
+                }
+
+                // Rename the directory
+                try
+                {
+                    Directory.Move(oldPath, newPath);
+                    
+                    // Update the node's tag with the new path
+                    e.Node.Tag = newPath;
+                    
+                    // Update any child nodes that might have this as their parent path
+                    UpdateChildNodePaths(e.Node, oldPath, newPath);
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    MessageBox.Show("Access denied. You don't have permission to rename this folder.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    e.CancelEdit = true;
+                }
+                catch (IOException ex)
+                {
+                    MessageBox.Show($"Failed to rename folder: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    e.CancelEdit = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Error in AfterLabelEdit", "FileExplorerTreeView_AfterLabelEdit", ex);
+                e.CancelEdit = true;
+            }
+        }
+
+        private void UpdateChildNodePaths(TreeNode parentNode, string oldParentPath, string newParentPath)
+        {
+            try
+            {
+                foreach (TreeNode childNode in parentNode.Nodes)
+                {
+                    string childPath = childNode.Tag?.ToString();
+                    if (!string.IsNullOrEmpty(childPath) && childPath.StartsWith(oldParentPath))
+                    {
+                        string newChildPath = newParentPath + childPath.Substring(oldParentPath.Length);
+                        childNode.Tag = newChildPath;
+                        
+                        // Recursively update grandchildren
+                        UpdateChildNodePaths(childNode, childPath, newChildPath);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to update child node paths", "UpdateChildNodePaths", ex);
+            }
         }
 
         private Bitmap CreateIcon(Color color)
@@ -1725,6 +3275,61 @@ namespace Blueshot
                     // Scissor blades
                     g.DrawEllipse(pen, 18, 17, 4, 4);
                     g.DrawLine(pen, 20, 19, 14, 13);
+                }
+            }
+            return icon;
+        }
+
+        private Bitmap CreateFileExplorerIcon()
+        {
+            var icon = new Bitmap(32, 32);
+            using (var g = Graphics.FromImage(icon))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                
+                // Folder background
+                using (var brush = new System.Drawing.Drawing2D.LinearGradientBrush(
+                    new Point(0, 0), new Point(32, 32),
+                    Color.FromArgb(255, 193, 7), Color.FromArgb(255, 152, 0)))
+                {
+                    // Main folder body
+                    g.FillRectangle(brush, 3, 10, 26, 18);
+                    
+                    // Folder tab
+                    g.FillRectangle(brush, 3, 6, 12, 6);
+                }
+                
+                // Folder shadow/depth
+                using (var brush = new SolidBrush(Color.FromArgb(100, 0, 0, 0)))
+                {
+                    g.FillRectangle(brush, 4, 27, 25, 2);
+                }
+                
+                // Files inside folder
+                using (var brush = new SolidBrush(Color.FromArgb(240, 240, 240)))
+                {
+                    g.FillRectangle(brush, 8, 14, 16, 2);
+                    g.FillRectangle(brush, 8, 17, 12, 2);
+                    g.FillRectangle(brush, 8, 20, 14, 2);
+                    g.FillRectangle(brush, 8, 23, 10, 2);
+                }
+                
+                // Folder outline
+                using (var pen = new Pen(Color.FromArgb(255, 111, 0), 1.5f))
+                {
+                    // Main folder outline
+                    g.DrawRectangle(pen, 3, 10, 26, 18);
+                    // Tab outline
+                    g.DrawLine(pen, 3, 6, 15, 6);
+                    g.DrawLine(pen, 15, 6, 15, 10);
+                    g.DrawLine(pen, 3, 6, 3, 10);
+                }
+                
+                // Highlight for 3D effect
+                using (var pen = new Pen(Color.FromArgb(100, 255, 255, 255), 1))
+                {
+                    g.DrawLine(pen, 4, 11, 4, 27);
+                    g.DrawLine(pen, 4, 11, 28, 11);
                 }
             }
             return icon;
@@ -4025,49 +5630,18 @@ namespace Blueshot
                 statusLabel.Text = "Saving...";
                 this.Cursor = Cursors.WaitCursor;
 
+                // Get the save directory from file explorer selection or fallback to desktop
+                string saveDirectory = GetSelectedSaveDirectory();
+
                 await Task.Run(() =>
                 {
-                    var desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
                     var fileName = $"Screenshot_{DateTime.Now:yyyyMMdd_HHmmss}.png";
-                    var filePath = Path.Combine(desktop, fileName);
-                    screenshot.Save(filePath, ImageFormat.Png);
-                });
-
-                statusLabel.Text = "Screenshot saved to desktop";
-                this.DialogResult = DialogResult.OK;
-            }
-            catch (Exception ex)
-            {
-                statusLabel.Text = "Save failed";
-                MessageBox.Show($"Error saving screenshot: {ex.Message}", "Save Error",
-                    MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-            finally
-            {
-                this.Cursor = Cursors.Default;
-            }
-        }
-
-        private async void SaveAs()
-        {
-            var saveDialog = new SaveFileDialog
-            {
-                Filter = "PNG files (*.png)|*.png|JPEG files (*.jpg)|*.jpg|BMP files (*.bmp)|*.bmp|GIF files (*.gif)|*.gif|All files (*.*)|*.*",
-                FilterIndex = 1,
-                FileName = $"Screenshot_{DateTime.Now:yyyyMMdd_HHmmss}.png"
-            };
-
-            if (saveDialog.ShowDialog() == DialogResult.OK)
-            {
-                try
-                {
-                    statusLabel.Text = "Saving...";
-                    this.Cursor = Cursors.WaitCursor;
-
-                    // Prepare image with annotations for saving
+                    var filePath = Path.Combine(saveDirectory, fileName);
+                    
+                    // Ensure we have a valid image to save
                     Bitmap imageToSave = null;
                     
-                    // Method 1: Create image with annotations
+                    // Create image with annotations if any exist
                     if (pictureBox.Image != null)
                     {
                         imageToSave = new Bitmap(pictureBox.Image.Width, pictureBox.Image.Height);
@@ -4083,45 +5657,77 @@ namespace Blueshot
                                 DrawAnnotation(g, annotation);
                             }
                         }
+                        
+                        imageToSave.Save(filePath, ImageFormat.Png);
+                        
+                        // Clean up the temporary image
+                        if (imageToSave != workingImage && imageToSave != screenshot)
+                        {
+                            imageToSave.Dispose();
+                        }
                     }
                     else
                     {
-                        // Fallback: Use working image or screenshot
-                        imageToSave = workingImage ?? screenshot;
+                        // Fallback to screenshot or working image
+                        (screenshot ?? workingImage)?.Save(filePath, ImageFormat.Png);
+                    }
+                });
+
+                string directoryName = Path.GetFileName(saveDirectory.TrimEnd(Path.DirectorySeparatorChar));
+                if (string.IsNullOrEmpty(directoryName))
+                {
+                    directoryName = saveDirectory;
+                }
+                
+                statusLabel.Text = $"Screenshot saved to {directoryName}";
+                this.DialogResult = DialogResult.OK;
+            }
+            catch (Exception ex)
+            {
+                statusLabel.Text = "Save failed";
+                MessageBox.Show($"Error saving screenshot: {ex.Message}", "Save Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                this.Cursor = Cursors.Default;
+            }
+        }
+
+        private string GetSelectedSaveDirectory()
+        {
+            try
+            {
+                // If file explorer is visible and has a selection, use that
+                if (isFileExplorerVisible && fileExplorerTreeView?.SelectedNode != null)
+                {
+                    string selectedPath = fileExplorerTreeView.SelectedNode.Tag?.ToString();
+                    
+                    // If it's a directory, use it
+                    if (!string.IsNullOrEmpty(selectedPath) && Directory.Exists(selectedPath))
+                    {
+                        return selectedPath;
                     }
                     
-                    await Task.Run(() =>
+                    // If it's a file, use its parent directory
+                    if (!string.IsNullOrEmpty(selectedPath) && File.Exists(selectedPath))
                     {
-                        var format = saveDialog.FilterIndex switch
+                        string parentDirectory = Path.GetDirectoryName(selectedPath);
+                        if (!string.IsNullOrEmpty(parentDirectory) && Directory.Exists(parentDirectory))
                         {
-                            2 => ImageFormat.Jpeg,
-                            3 => ImageFormat.Bmp,
-                            4 => ImageFormat.Gif,
-                            _ => ImageFormat.Png
-                        };
-
-                        imageToSave.Save(saveDialog.FileName, format);
-                    });
-                    
-                    // Clean up if we created a new image
-                    if (imageToSave != workingImage && imageToSave != screenshot)
-                    {
-                        imageToSave?.Dispose();
+                            return parentDirectory;
+                        }
                     }
-
-                    statusLabel.Text = $"Screenshot saved as {Path.GetFileName(saveDialog.FileName)}";
-                    this.DialogResult = DialogResult.OK;
                 }
-                catch (Exception ex)
-                {
-                    statusLabel.Text = "Save failed";
-                    MessageBox.Show($"Error saving screenshot: {ex.Message}", "Save Error",
-                        MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-                finally
-                {
-                    this.Cursor = Cursors.Default;
-                }
+                
+                // Fallback to Desktop
+                return Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to get selected save directory", "GetSelectedSaveDirectory", ex);
+                // Fallback to Desktop on any error
+                return Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
             }
         }
 
@@ -4247,6 +5853,12 @@ namespace Blueshot
                         RedrawImage();
                         e.Handled = true;
                     }
+                    else if (isFileExplorerVisible && fileExplorerTreeView.SelectedNode != null)
+                    {
+                        // Delete in file explorer
+                        DeleteMenuItem_Click(sender, EventArgs.Empty);
+                        e.Handled = true;
+                    }
                     break;
                 case Keys.Enter:
                     if (currentTool == AnnotationTool.Crop && !cropRectangle.IsEmpty)
@@ -4271,9 +5883,6 @@ namespace Blueshot
                     {
                         QuickSave();
                     }
-                    break;
-                case Keys.S when e.Control && e.Shift:
-                    SaveAs();
                     break;
                 case Keys.C when e.Control:
                     CopyToClipboard();
@@ -4349,6 +5958,14 @@ namespace Blueshot
                 case Keys.D6:
                     SetAnnotationTool(AnnotationTool.Text);
                     e.Handled = true;
+                    break;
+                case Keys.F2:
+                    // Rename in file explorer
+                    if (isFileExplorerVisible && fileExplorerTreeView.SelectedNode != null)
+                    {
+                        RenameMenuItem_Click(sender, EventArgs.Empty);
+                        e.Handled = true;
+                    }
                     break;
             }
         }
@@ -4437,7 +6054,6 @@ namespace Blueshot
         internal static class Resources
         {
             internal static Image Save => null;
-            internal static Image SaveAs => null;
             internal static Image Copy => null;
             internal static Image ZoomIn => null;
             internal static Image ZoomOut => null;

@@ -16,6 +16,7 @@ namespace Blueshot
         private ContextMenuStrip trayMenu;
         private GlobalHotkey globalHotkey;
         private PreviewForm previewForm; // Single instance for all screenshots
+        private IntPtr lastActiveWindow = IntPtr.Zero; // Store the last active window for tray menu capture
 
         public MainForm()
         {
@@ -114,7 +115,7 @@ namespace Blueshot
             // Current screen capture button
             currentScreenButton = new RoundedButton
             {
-                Text = "&Current Screen (No Taskbar) (F3)",
+                Text = "&Capture Window (F3)",
                 Font = new Font("Segoe UI", 10),
                 Size = new Size(250, 40),
                 BackColor = Color.FromArgb(0, 150, 100),
@@ -172,8 +173,13 @@ namespace Blueshot
         private void InitializeTrayIcon()
         {
             trayMenu = new ContextMenuStrip();
+            trayMenu.Opening += (s, e) => {
+                // Don't capture window here as it will be the tray/taskbar
+                // Instead, we'll use a smarter approach in the capture method
+                Logger.LogInfo("Tray menu opening");
+            };
             trayMenu.Items.Add("Capture Region", null, (s, e) => StartRegionCapture());
-            trayMenu.Items.Add("Capture Current Screen (no taskbar)", null, (s, e) => StartCurrentScreenCapture());
+            trayMenu.Items.Add("Capture Window", null, (s, e) => StartCurrentScreenCapture());
             trayMenu.Items.Add("-");
             trayMenu.Items.Add("Show Window", null, (s, e) => ShowMainWindow());
             trayMenu.Items.Add("Settings", null, (s, e) => SettingsButton_Click(this, EventArgs.Empty));
@@ -194,11 +200,11 @@ namespace Blueshot
                 
                 if (globalHotkey != null && !string.IsNullOrEmpty(globalHotkey.CurrentScreenHotkeyDescription))
                 {
-                    trayMenu.Items[1].Text = $"Capture Current Screen (no taskbar) ({globalHotkey.CurrentScreenHotkeyDescription})";
+                    trayMenu.Items[1].Text = $"Capture Window ({globalHotkey.CurrentScreenHotkeyDescription})";
                 }
                 else
                 {
-                    trayMenu.Items[1].Text = "Capture Current Screen (no taskbar)";
+                    trayMenu.Items[1].Text = "Capture Window";
                 }
             };
 
@@ -251,7 +257,7 @@ namespace Blueshot
                     }
                     if (!string.IsNullOrEmpty(currentScreenDesc))
                     {
-                        message += $"\n• {currentScreenDesc} - Current screen (no taskbar)";
+                        message += $"\n• {currentScreenDesc} - Capture window";
                     }
                     
                     trayIcon.ShowBalloonTip(3000, "Blueshot Ready", message, ToolTipIcon.Info);
@@ -335,13 +341,47 @@ namespace Blueshot
 
         private void StartCurrentScreenCapture()
         {
-            statusLabel.Text = "Capturing current screen...";
+            statusLabel.Text = "Capturing window...";
             this.Hide();
 
             try
             {
                 var captureManager = new ScreenCaptureManager();
-                var screenshot = captureManager.CaptureCurrentScreenWithoutTaskbar();
+                Bitmap screenshot = null;
+
+                // Add a longer delay to allow tray menu to close and user to focus on target window
+                Logger.LogInfo("Waiting for menu to close and getting active window...");
+                System.Threading.Thread.Sleep(500);
+                
+                // Get the currently active window after the delay
+                var activeWindow = GetForegroundWindow();
+                Logger.LogInfo($"Active window after delay: {activeWindow}");
+
+                if (activeWindow != IntPtr.Zero && IsWindowValid(activeWindow))
+                {
+                    // Check if it's not the desktop or taskbar
+                    string windowTitle = GetWindowTitle(activeWindow);
+                    Logger.LogInfo($"Window title: '{windowTitle}'");
+                    
+                    if (!string.IsNullOrEmpty(windowTitle) && 
+                        !windowTitle.Equals("Program Manager", StringComparison.OrdinalIgnoreCase) &&
+                        !windowTitle.Contains("Taskbar", StringComparison.OrdinalIgnoreCase))
+                    {
+                        screenshot = captureManager.CaptureWindow(activeWindow);
+                        Logger.LogInfo("Successfully captured active window");
+                    }
+                    else
+                    {
+                        Logger.LogInfo("Active window is desktop/taskbar, falling back to screen capture");
+                    }
+                }
+
+                // If we don't have a valid window screenshot, fall back to active window capture
+                if (screenshot == null)
+                {
+                    Logger.LogInfo("Falling back to active window capture method");
+                    screenshot = captureManager.CaptureActiveWindow();
+                }
 
                 if (screenshot != null && screenshot.Width > 0 && screenshot.Height > 0)
                 {
@@ -366,10 +406,10 @@ namespace Blueshot
                 }
                 else
                 {
-                    Logger.LogError("Current screen capture returned null or invalid image");
-                    MessageBox.Show("Failed to capture current screen. Please try again.", "Capture Failed", 
+                    Logger.LogError("Window capture returned null or invalid image");
+                    MessageBox.Show("Failed to capture window. Please try again.", "Capture Failed", 
                         MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    statusLabel.Text = "Current screen capture failed";
+                    statusLabel.Text = "Window capture failed";
                 }
             }
             catch (Exception ex)
@@ -709,5 +749,33 @@ namespace Blueshot
                 Console.WriteLine($"Failed to refresh tray icon: {ex.Message}");
             }
         }
+
+        #region Windows API
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+        
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+        
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool IsWindow(IntPtr hWnd);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+        private bool IsWindowValid(IntPtr windowHandle)
+        {
+            return windowHandle != IntPtr.Zero && 
+                   IsWindow(windowHandle) && 
+                   IsWindowVisible(windowHandle);
+        }
+
+        private string GetWindowTitle(IntPtr windowHandle)
+        {
+            var title = new System.Text.StringBuilder(256);
+            GetWindowText(windowHandle, title, title.Capacity);
+            return title.ToString();
+        }
+        #endregion
     }
 }

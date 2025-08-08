@@ -82,7 +82,7 @@ namespace Blueshot
             }
             catch (Exception ex)
             {
-                throw new InvalidOperationException($"Failed to capture current screen without taskbar: {ex.Message}", ex);
+                throw new InvalidOperationException($"Failed to capture window: {ex.Message}", ex);
             }
         }
 
